@@ -24,6 +24,7 @@ class InvoiceItem extends Model
         'discount_percentage',
         'tax_rate',
         'line_total',
+        'sales_order_item_id',
     ];
 
     protected $casts = [
@@ -65,5 +66,10 @@ class InvoiceItem extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+    
+    public function salesOrderItem(): BelongsTo
+    {
+        return $this->belongsTo(SalesOrderItem::class);
     }
 }

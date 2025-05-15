@@ -16,7 +16,7 @@ class DeliveryNoteItem extends Model
         'delivery_note_id',
         'product_id',
         'invoice_item_id',
-        // 'sales_order_item_id',
+        'sales_order_item_id',
         'product_name',
         'product_sku',
         'quantity_ordered',
@@ -43,8 +43,8 @@ class DeliveryNoteItem extends Model
         return $this->belongsTo(InvoiceItem::class);
     }
 
-    // public function salesOrderItem(): BelongsTo
-    // {
-    //     return $this->belongsTo(SalesOrderItem::class);
-    // }
+    public function salesOrderItem(): BelongsTo
+    {
+        return $this->belongsTo(SalesOrderItem::class);
+    }
 }

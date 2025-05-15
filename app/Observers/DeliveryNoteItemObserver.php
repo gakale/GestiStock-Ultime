@@ -3,6 +3,7 @@
 namespace App\Observers;
 
 use App\Models\DeliveryNoteItem;
+use App\Models\SalesOrderItem; // Importer
 use Illuminate\Support\Facades\Log;
 
 class DeliveryNoteItemObserver
@@ -11,6 +12,17 @@ class DeliveryNoteItemObserver
     {
         Log::info("[DeliveryNoteItemObserver] CREATED event for DeliveryNoteItem ID: {$deliveryNoteItem->id}. Parent DeliveryNote status: " . $deliveryNoteItem->deliveryNote?->status);
         // Plus de logique de stock ici, sera gérée par DeliveryNoteObserver
+        
+        // Mettre à jour SalesOrderItem si lié
+        if ($deliveryNoteItem->sales_order_item_id) {
+            $soItem = SalesOrderItem::find($deliveryNoteItem->sales_order_item_id);
+            if ($soItem) {
+                $soItem->increment('quantity_shipped', $deliveryNoteItem->quantity_shipped);
+                // Mettre à jour le statut du SalesOrder parent (voir SalesOrderObserver)
+                $soItem->salesOrder?->checkAndUpdateStatus();
+                Log::info("[DeliveryNoteItemObserver] Updated SalesOrderItem ID: {$soItem->id}, incremented quantity_shipped by {$deliveryNoteItem->quantity_shipped}");
+            }
+        }
     }
 
     public function updated(DeliveryNoteItem $deliveryNoteItem): void
@@ -29,5 +41,15 @@ class DeliveryNoteItemObserver
     {
         Log::info("[DeliveryNoteItemObserver] DELETED event for DeliveryNoteItem ID: {$deliveryNoteItem->id}.");
         // Plus de logique de stock ici
+        
+        // Mettre à jour SalesOrderItem si lié
+        if ($deliveryNoteItem->sales_order_item_id) {
+            $soItem = SalesOrderItem::find($deliveryNoteItem->sales_order_item_id);
+            if ($soItem) {
+                $soItem->decrement('quantity_shipped', $deliveryNoteItem->quantity_shipped);
+                $soItem->salesOrder?->checkAndUpdateStatus();
+                Log::info("[DeliveryNoteItemObserver] Updated SalesOrderItem ID: {$soItem->id}, decremented quantity_shipped by {$deliveryNoteItem->quantity_shipped}");
+            }
+        }
     }
 }

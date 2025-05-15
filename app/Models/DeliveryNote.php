@@ -18,7 +18,7 @@ class DeliveryNote extends Model
         'client_id',
         'user_id',
         'invoice_id',
-        // 'sales_order_id',
+        'sales_order_id',
         'delivery_date',
         'status',
         'shipping_address_line1',
@@ -83,10 +83,10 @@ class DeliveryNote extends Model
         return $this->belongsTo(Invoice::class);
     }
 
-    // public function salesOrder(): BelongsTo
-    // {
-    //     return $this->belongsTo(SalesOrder::class);
-    // }
+    public function salesOrder(): BelongsTo
+    {
+        return $this->belongsTo(SalesOrder::class);
+    }
 
     public function items(): HasMany
     {

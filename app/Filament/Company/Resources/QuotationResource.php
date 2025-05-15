@@ -5,11 +5,14 @@ namespace App\Filament\Company\Resources;
 use App\Filament\Company\Resources\QuotationResource\Pages;
 // use App\Filament\Company\Resources\QuotationResource\RelationManagers;
 use App\Filament\Company\Resources\InvoiceResource;
+use App\Filament\Company\Resources\SalesOrderResource;
 use App\Models\Quotation;
 use App\Models\Client;
 use App\Models\Product;
 use App\Models\Invoice; // Importer le modèle Invoice
 use App\Models\InvoiceItem; // Importer le modèle InvoiceItem
+use App\Models\SalesOrder; // Importer SalesOrder
+use App\Models\SalesOrderItem; // Importer SalesOrderItem
 use Filament\Notifications\Notification; // Pour les notifications
 // use App\Models\TenantUser;
 use Filament\Forms;
@@ -383,6 +386,62 @@ class QuotationResource extends Resource
                             return redirect(InvoiceResource::getUrl('edit', ['record' => $invoice]));
                         })
                         ->visible(fn (Quotation $record) => $record->status === 'accepted'), // Visible seulement si le devis est accepté
+                    
+                    Tables\Actions\Action::make('convert_to_sales_order')
+                        ->label('Convertir en Bon de Commande')
+                        ->icon('heroicon-s-shopping-bag') // Ou une autre icône appropriée
+                        ->color('primary')
+                        ->requiresConfirmation()
+                        ->modalHeading('Convertir le Devis en Bon de Commande')
+                        ->action(function (Quotation $record) {
+                            if ($record->status !== 'accepted') {
+                                Notification::make()
+                                    ->title('Conversion impossible')
+                                    ->body('Le devis doit être "Accepté" pour être converti.')
+                                    ->danger()->send();
+                                return;
+                            }
+
+                            // Logique pour créer un SalesOrder à partir du Quotation
+                            $salesOrderData = [
+                                'client_id' => $record->client_id,
+                                'user_id' => auth()->check() && auth()->user() instanceof \App\Models\TenantUser ? auth()->user()->getKey() : $record->user_id,
+                                'quotation_id' => $record->id, // Lier au devis d'origine
+                                'order_date' => now()->toDateString(),
+                                'status' => 'pending_confirmation', // Ou 'confirmed' directement
+                                'subtotal' => $record->subtotal,
+                                'taxes_amount' => $record->taxes_amount,
+                                'discount_amount' => $record->discount_amount,
+                                'shipping_charges' => $record->shipping_charges,
+                                'total_amount' => $record->total_amount,
+                                'notes' => "Basé sur le devis {$record->quotation_number}",
+                            ];
+                            $salesOrder = SalesOrder::create($salesOrderData);
+
+                            foreach ($record->items as $quotationItem) {
+                                SalesOrderItem::create([
+                                    'sales_order_id' => $salesOrder->id,
+                                    'product_id' => $quotationItem->product_id,
+                                    'product_name' => $quotationItem->product_name,
+                                    'product_sku' => $quotationItem->product_sku,
+                                    'description' => $quotationItem->description,
+                                    'quantity_ordered' => $quotationItem->quantity,
+                                    'unit_price' => $quotationItem->unit_price,
+                                    'discount_percentage' => $quotationItem->discount_percentage,
+                                    'tax_rate' => $quotationItem->tax_rate,
+                                    'line_total' => $quotationItem->line_total,
+                                ]);
+                            }
+                            // Optionnel: Mettre à jour le statut du devis
+                            // $record->update(['status' => 'converted_to_so']);
+
+                            Notification::make()
+                                ->title('Bon de Commande Créé')
+                                ->body("Le BC {$salesOrder->order_number} a été créé.")
+                                ->success()->send();
+                            return redirect(SalesOrderResource::getUrl('edit', ['record' => $salesOrder]));
+                        })
+                        ->visible(fn (Quotation $record) => $record->status === 'accepted'),
                     // ... autres actions de statut
                 ]),
             ])
