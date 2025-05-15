@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes; // Si vous utilisez SoftDeletes
 use Illuminate\Support\Str;
+use Illuminate\Database\Eloquent\Relations\BelongsTo; // Ajouter
+
 
 class Product extends Model
 {
@@ -27,7 +29,7 @@ class Product extends Model
         'sku',
         'barcode',
         'is_active',
-        // 'category_id',
+        'product_category_id',
     ];
 
     /**
@@ -69,8 +71,8 @@ class Product extends Model
     }
 
     // Relation (à ajouter plus tard quand on aura les catégories)
-    // public function category()
-    // {
-    //     return $this->belongsTo(ProductCategory::class);
-    // }
+    public function category(): BelongsTo
+    {
+        return $this->belongsTo(ProductCategory::class, 'product_category_id');
+    }
 }

@@ -5,6 +5,7 @@ namespace App\Filament\Company\Resources;
 use App\Filament\Company\Resources\ProductResource\Pages;
 // use App\Filament\Company\Resources\ProductResource\RelationManagers; // Si vous en avez
 use App\Models\Product;
+use App\Models\ProductCategory;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -20,6 +21,7 @@ use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Grid;
+use Filament\Forms\Components\Select as FormsSelect; // Alias pour éviter conflit si Select est utilisé pour autre chose
 
 // Table Columns
 use Filament\Tables\Columns\TextColumn;
@@ -56,6 +58,20 @@ class ProductResource extends Resource
                             ->required()
                             ->unique(Product::class, 'slug', ignoreRecord: true)
                             ->maxLength(255),
+                        FormsSelect::make('product_category_id') // Champ pour la catégorie
+                            ->label('Catégorie')
+                            ->relationship('category', 'name')
+                            ->searchable()
+                            ->preload()
+                            ->createOptionForm([ // Permettre de créer une catégorie à la volée
+                                TextInput::make('name')
+                                    ->required()
+                                    ->live(onBlur: true)
+                                    ->afterStateUpdated(fn (Forms\Set $set, ?string $state) => $set('slug', Str::slug($state))),
+                                TextInput::make('slug')->required()->unique(ProductCategory::class, 'slug'),
+                            ])
+                            ->placeholder('Sélectionner une catégorie')
+                            ->columnSpanFull(), // Ajustez le columnSpan si nécessaire
                         Textarea::make('description')
                             ->label('Description')
                             ->columnSpanFull()
@@ -113,6 +129,11 @@ class ProductResource extends Resource
                     ->label('Nom')
                     ->searchable()
                     ->sortable(),
+                TextColumn::make('category.name') // Afficher le nom de la catégorie
+                    ->label('Catégorie')
+                    ->sortable()
+                    ->searchable()
+                    ->placeholder('N/A'),
                 TextColumn::make('sku')
                     ->label('SKU')
                     ->searchable()
