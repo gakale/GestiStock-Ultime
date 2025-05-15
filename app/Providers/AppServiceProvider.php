@@ -11,6 +11,7 @@ use App\Models\DeliveryNoteItem;
 use App\Models\DeliveryNote;
 use App\Models\SalesOrder;
 use App\Models\PaymentReceived;
+use App\Models\CreditNoteItem;
 use App\Observers\PurchaseOrderObserver;
 use App\Observers\PurchaseOrderItemObserver;
 use App\Observers\GoodsReceiptItemObserver;
@@ -20,6 +21,7 @@ use App\Observers\DeliveryNoteItemObserver;
 use App\Observers\DeliveryNoteObserver;
 use App\Observers\SalesOrderObserver;
 use App\Observers\PaymentReceivedObserver;
+use App\Observers\CreditNoteItemObserver;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -47,5 +49,6 @@ class AppServiceProvider extends ServiceProvider
         DeliveryNote::observe(DeliveryNoteObserver::class);
         SalesOrder::observe(SalesOrderObserver::class);
         PaymentReceived::observe(PaymentReceivedObserver::class);
+        CreditNoteItem::observe(CreditNoteItemObserver::class);
     }
 }
