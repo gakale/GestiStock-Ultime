@@ -5,55 +5,52 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Carbon\Carbon;
 
-class Invoice extends Model
+class Quotation extends Model
 {
     use HasFactory, HasUuids, SoftDeletes;
 
     protected $fillable = [
-        'invoice_number',
+        'quotation_number',
         'client_id',
         'user_id',
-        'invoice_date',
-        'due_date',
+        'quotation_date',
+        'expiry_date',
         'status',
         'subtotal',
         'taxes_amount',
         'discount_amount',
         'shipping_charges',
         'total_amount',
-        'amount_paid',
-        'payment_terms',
+        'terms_and_conditions',
         'notes_to_client',
         'internal_notes',
-        'source_document_type',
-        'source_document_id',
     ];
 
     protected $casts = [
-        'invoice_date' => 'date',
-        'due_date' => 'date',
+        'quotation_date' => 'date',
+        'expiry_date' => 'date',
         'subtotal' => 'decimal:2',
         'taxes_amount' => 'decimal:2',
         'discount_amount' => 'decimal:2',
         'shipping_charges' => 'decimal:2',
         'total_amount' => 'decimal:2',
-        'amount_paid' => 'decimal:2',
     ];
 
-    public static function generateNextInvoiceNumber(): string
+    public static function generateNextQuotationNumber(): string
     {
-        $prefix = 'INV-' . Carbon::now()->format('Ym') . '-';
-        $lastInvoice = self::where('invoice_number', 'like', $prefix . '%')
-                           ->orderBy('invoice_number', 'desc')
+        $prefix = 'QTN-' . Carbon::now()->format('Ym') . '-'; // QTN pour Quotation
+        // ... (logique similaire à Invoice::generateNextInvoiceNumber)
+        $lastQuotation = self::where('quotation_number', 'like', $prefix . '%')
+                           ->orderBy('quotation_number', 'desc')
                            ->first();
         $nextNumber = 1;
-        if ($lastInvoice) {
-            $lastSequentialPart = substr($lastInvoice->invoice_number, strlen($prefix));
+        if ($lastQuotation) {
+            $lastSequentialPart = substr($lastQuotation->quotation_number, strlen($prefix));
             if (is_numeric($lastSequentialPart)) {
                 $nextNumber = (int)$lastSequentialPart + 1;
             }
@@ -64,23 +61,21 @@ class Invoice extends Model
     protected static function boot()
     {
         parent::boot();
-        static::creating(function ($invoice) {
-            if (empty($invoice->invoice_number)) {
-                $invoice->invoice_number = self::generateNextInvoiceNumber();
+        static::creating(function ($quotation) {
+            if (empty($quotation->quotation_number)) {
+                $quotation->quotation_number = self::generateNextQuotationNumber();
             }
-            if (empty($invoice->user_id) && auth()->check() && auth()->user() instanceof TenantUser) {
-                $invoice->user_id = auth()->user()->getKey();
+            if (empty($quotation->user_id) && auth()->check() && auth()->user() instanceof TenantUser) {
+                $quotation->user_id = auth()->user()->getKey();
             }
-            if (empty($invoice->invoice_date)) {
-                $invoice->invoice_date = now()->toDateString();
+            if (empty($quotation->quotation_date)) {
+                $quotation->quotation_date = now()->toDateString();
             }
-            if (empty($invoice->due_date) && $invoice->invoice_date) {
-                // Exemple : échéance par défaut à 30 jours
-                $invoice->due_date = Carbon::parse($invoice->invoice_date)->addDays(30)->toDateString();
+            if (empty($quotation->expiry_date) && $quotation->quotation_date) {
+                // Exemple : expiration par défaut à 15 ou 30 jours
+                $quotation->expiry_date = Carbon::parse($quotation->quotation_date)->addDays(15)->toDateString();
             }
         });
-
-        // L'événement 'created' ou un observer sur InvoiceItem gérera la sortie de stock
     }
 
     public function client(): BelongsTo
@@ -95,24 +90,20 @@ class Invoice extends Model
 
     public function items(): HasMany
     {
-        return $this->hasMany(InvoiceItem::class);
+        return $this->hasMany(QuotationItem::class);
     }
 
-    public function calculateTotals()
+    public function calculateTotals() // Identique à Invoice
     {
         $subtotal = 0;
         $totalTaxes = 0;
-
         foreach ($this->items as $item) {
-            // (Quantité * Prix Unitaire) - Remise sur la ligne
             $lineBaseForTax = ($item->quantity * $item->unit_price) * (1 - ($item->discount_percentage / 100));
-            $subtotal += $lineBaseForTax; // Le sous-total est avant les taxes de ligne
+            $subtotal += $lineBaseForTax;
             $totalTaxes += $lineBaseForTax * ($item->tax_rate / 100);
         }
-
         $this->subtotal = $subtotal;
         $this->taxes_amount = $totalTaxes;
-        // total_amount = (sous-total des lignes après remises de ligne) + (taxes des lignes) - (remise globale) + (frais de port)
         $this->total_amount = $this->subtotal + $this->taxes_amount - $this->discount_amount + $this->shipping_charges;
         $this->saveQuietly();
     }
