@@ -8,6 +8,7 @@ use App\Models\PurchaseOrder;
 use App\Models\StockMovement; // Importer le modèle StockMovement
 use App\Models\GoodsReceipt;  // Importer GoodsReceipt pour related_document_type
 use App\Models\TenantUser; // Importer TenantUser pour la vérification de type
+use Illuminate\Support\Facades\Log;
 
 class GoodsReceiptItemObserver
 {
@@ -16,6 +17,11 @@ class GoodsReceiptItemObserver
      */
     public function created(GoodsReceiptItem $goodsReceiptItem): void
     {
+        if (!$goodsReceiptItem->goodsReceipt) {
+            Log::error('[GoodsReceiptItemObserver] GoodsReceipt relation is null for GoodsReceiptItem ID: ' . $goodsReceiptItem->id);
+            return; // Impossible de continuer sans le document parent
+        }
+        
         $product = $goodsReceiptItem->product;
         $newStockQuantity = $product->stock_quantity; // Stock actuel avant incrémentation
 
@@ -72,6 +78,11 @@ class GoodsReceiptItemObserver
      */
     public function deleted(GoodsReceiptItem $goodsReceiptItem): void
     {
+        if (!$goodsReceiptItem->goodsReceipt) {
+            Log::error('[GoodsReceiptItemObserver] GoodsReceipt relation is null for GoodsReceiptItem ID: ' . $goodsReceiptItem->id);
+            return; // Impossible de continuer sans le document parent
+        }
+        
         $product = $goodsReceiptItem->product;
         $newStockQuantity = $product->stock_quantity; // Stock actuel avant décrémentation
 
