@@ -11,17 +11,20 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('users', function (Blueprint $table) {
-            $table->uuid('id')->primary(); // UUIDs pour les utilisateurs des tenants aussi
-            $table->string('name');
-            $table->string('email')->unique();
-            $table->timestamp('email_verified_at')->nullable();
-            $table->string('password');
-            $table->rememberToken();
-            $table->timestamps();
-            // Ajoutez ici d'autres champs spécifiques aux utilisateurs des tenants
-            // Par exemple, un rôle, une référence à une équipe, etc.
-        });
+        // Vérifie si la table users existe déjà avant de la créer
+        if (!Schema::hasTable('users')) {
+            Schema::create('users', function (Blueprint $table) {
+                $table->uuid('id')->primary(); // UUIDs pour les utilisateurs des tenants aussi
+                $table->string('name');
+                $table->string('email')->unique();
+                $table->timestamp('email_verified_at')->nullable();
+                $table->string('password');
+                $table->rememberToken();
+                $table->timestamps();
+                // Ajoutez ici d'autres champs spécifiques aux utilisateurs des tenants
+                // Par exemple, un rôle, une référence à une équipe, etc.
+            });
+        }
     }
 
     /**
