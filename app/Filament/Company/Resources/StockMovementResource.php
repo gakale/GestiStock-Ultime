@@ -34,10 +34,11 @@ class StockMovementResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->defaultSort('movement_date', 'desc') // Tri par défaut par date décroissante
             ->columns([
                 TextColumn::make('movement_date')
-                    ->label('Date Mouvement')
-                    ->dateTime()
+                    ->label('Date et Heure')
+                    ->dateTime('d/m/Y H:i:s')
                     ->sortable()
                     ->searchable(),
                 TextColumn::make('product.name')

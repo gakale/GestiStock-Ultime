@@ -23,6 +23,10 @@ use App\Observers\SalesOrderObserver;
 use App\Observers\PaymentReceivedObserver;
 use App\Observers\CreditNoteItemObserver;
 use Illuminate\Support\ServiceProvider;
+use App\Models\SupplierCreditNote;
+use App\Models\SupplierCreditNoteItem;
+use App\Observers\SupplierCreditNoteObserver;
+use App\Observers\SupplierCreditNoteItemObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -50,5 +54,7 @@ class AppServiceProvider extends ServiceProvider
         SalesOrder::observe(SalesOrderObserver::class);
         PaymentReceived::observe(PaymentReceivedObserver::class);
         CreditNoteItem::observe(CreditNoteItemObserver::class);
+        SupplierCreditNote::observe(SupplierCreditNoteObserver::class);
+        SupplierCreditNoteItem::observe(SupplierCreditNoteItemObserver::class);
     }
 }

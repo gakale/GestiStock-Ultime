@@ -2,9 +2,11 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\PdfGenerationController;
 use Illuminate\Support\Facades\Route;
 use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
 use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
+use Illuminate\Support\Facades\Log;
 
 /*
 |--------------------------------------------------------------------------
@@ -18,13 +20,37 @@ use Stancl\Tenancy\Middleware\PreventAccessFromCentralDomains;
 |
 */
 
+// Ajout d'un log pour vérifier que le fichier tenant.php est bien chargé
+Log::info('Tenant routes file is loaded');
+
+// Groupe de routes tenant avec middleware web et tenancy
 Route::middleware([
-    'web', // Middleware web standard (sessions, cookies, CSRF, etc.)
-    InitializeTenancyByDomain::class, // Identifie le tenant basé sur le domaine
-    PreventAccessFromCentralDomains::class, // Empêche l'accès à ces routes depuis les domaines centraux
+    'web',
+    InitializeTenancyByDomain::class,
+    PreventAccessFromCentralDomains::class,
 ])->group(function () {
+    // Log pour vérifier que le groupe de routes est exécuté
+    Log::info('Tenant routes group is executed');
+    
     Route::get('/', function () {
-        // dd(tenant()); // Pour vérifier que le tenant est bien identifié
+        Log::info('Tenant root route accessed for tenant: ' . tenant('id'));
         return 'This is your multi-tenant application. The id of the current tenant is ' . tenant('id');
     });
+    
+    // Route de test très simple pour vérifier le routage
+    Route::get('/invoices/test-route', function () {
+        Log::info('Test route /invoices/test-route accessed for tenant: ' . tenant('id'));
+        return "Test route OK for tenant: " . tenant('id');
+    });
+    
+    // Route pour la génération de PDF des factures - accessible sans authentification
+    // Ajout d'une route simple pour tester sans paramètres
+    Route::get('/invoices/pdf-test', function() {
+        Log::info('PDF test route accessed for tenant: ' . tenant('id'));
+        return "PDF test route OK for tenant: " . tenant('id');
+    });
+    
+    // Route pour la génération de PDF des factures - accessible sans authentification
+    Route::get('/invoices/{invoiceId}/pdf', [PdfGenerationController::class, 'downloadInvoice'])
+         ->name('tenant.invoices.pdf'); // Nommer la route est une bonne pratique
 });
