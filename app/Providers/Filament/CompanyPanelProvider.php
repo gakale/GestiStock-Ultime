@@ -48,6 +48,7 @@ class CompanyPanelProvider extends PanelProvider
                 \App\Filament\Company\Widgets\TotalClientsStats::class,
                 \App\Filament\Company\Widgets\MonthlyInvoicesStats::class,
                 \App\Filament\Company\Widgets\MonthlyRevenueStats::class,
+                \App\Filament\Company\Widgets\LatestStockMovements::class,
             ])
             ->middleware([
                 EncryptCookies::class,
