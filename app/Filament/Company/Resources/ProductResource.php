@@ -78,7 +78,7 @@ class ProductResource extends Resource
                             ->rows(3),
                     ]),
 
-                Section::make('Tarification et Stock')
+                Section::make('Tarification')
                     ->columns(2)
                     ->schema([
                         TextInput::make('purchase_price')
@@ -93,12 +93,32 @@ class ProductResource extends Resource
                             ->prefix('€') // Ou votre devise
                             ->required()
                             ->minValue(0),
+                    ]),
+                    
+                Section::make('Stock et Seuils')
+                    ->columns(2)
+                    ->schema([
                         TextInput::make('stock_quantity')
-                            ->label('Quantité en stock')
+                            ->label('Quantité en Stock Actuelle')
                             ->integer()
                             ->required()
                             ->default(0)
                             ->minValue(0),
+                        TextInput::make('stock_min_threshold')
+                            ->label('Seuil de Stock Minimum')
+                            ->numeric()
+                            ->helperText('Alerte si le stock passe en dessous.')
+                            ->nullable(),
+                        TextInput::make('stock_reorder_point')
+                            ->label('Point de Réapprovisionnement')
+                            ->numeric()
+                            ->helperText('Seuil pour déclencher une nouvelle commande.')
+                            ->nullable(),
+                        TextInput::make('stock_max_threshold')
+                            ->label('Seuil de Stock Maximum')
+                            ->numeric()
+                            ->helperText('Pour éviter le surstockage.')
+                            ->nullable(),
                         Toggle::make('is_active')
                             ->label('Produit Actif')
                             ->default(true),
@@ -144,7 +164,26 @@ class ProductResource extends Resource
                     ->sortable(),
                 TextColumn::make('stock_quantity')
                     ->label('Stock')
-                    ->sortable(),
+                    ->sortable()
+                    ->color(fn ($record) => 
+                        $record->stock_min_threshold !== null && $record->stock_quantity <= $record->stock_min_threshold ? 'danger' : 
+                        ($record->stock_reorder_point !== null && $record->stock_quantity <= $record->stock_reorder_point ? 'warning' : 'success')
+                    ),
+                TextColumn::make('stock_min_threshold')
+                    ->label('Stock Min')
+                    ->numeric()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('stock_reorder_point')
+                    ->label('Pt. Réappro.')
+                    ->numeric()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('stock_max_threshold')
+                    ->label('Stock Max')
+                    ->numeric()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
                 IconColumn::make('is_active')
                     ->label('Actif')
                     ->boolean()

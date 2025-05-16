@@ -50,6 +50,7 @@ class CompanyPanelProvider extends PanelProvider
                 \App\Filament\Company\Widgets\MonthlyRevenueStats::class,
                 \App\Filament\Company\Widgets\LatestStockMovements::class,
                 \App\Filament\Company\Widgets\MonthlySalesChart::class,
+                \App\Filament\Company\Widgets\StockAlerts::class,
             ])
             ->middleware([
                 EncryptCookies::class,
