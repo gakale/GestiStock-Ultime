@@ -42,6 +42,12 @@ class CompanyPanelProvider extends PanelProvider
             ->widgets([
                 // Widgets\AccountWidget::class,
                 // Widgets\FilamentInfoWidget::class,
+                
+                // Nos nouveaux widgets de statistiques
+                \App\Filament\Company\Widgets\TotalActiveProductsStats::class,
+                \App\Filament\Company\Widgets\TotalClientsStats::class,
+                \App\Filament\Company\Widgets\MonthlyInvoicesStats::class,
+                \App\Filament\Company\Widgets\MonthlyRevenueStats::class,
             ])
             ->middleware([
                 EncryptCookies::class,

@@ -104,18 +104,19 @@ class PdfGenerationController extends Controller
                 
                 Log::info("[PdfGenerationController] Génération du PDF pour la facture: {$invoice->invoice_number}");
                 
-                // Pour déboguer, retournons d'abord la vue HTML au lieu du PDF
-                Log::info("[PdfGenerationController] Retour de la vue HTML pour débogage");
-                return view('pdf.invoice', ['invoice' => $invoice, 'company' => $companyDetails]);
-                
-                // Générer le PDF avec la vue - COMMENTÉ POUR DÉBOGAGE
-                /*return Pdf::view('pdf.invoice', [
+                // Générer le PDF avec la vue
+                Log::info("[PdfGenerationController] Génération et téléchargement du PDF");
+                return Pdf::view('pdf.invoice', [
                             'invoice' => $invoice,
                             'company' => $companyDetails,
                         ])
                         ->format('a4')
                         ->name('Facture-' . $invoice->invoice_number . '.pdf')
-                        ->download(); // Forcer le téléchargement pour éviter les problèmes d'affichage*/
+                        ->download(); // Forcer le téléchargement pour éviter les problèmes d'affichage
+                
+                // Pour déboguer, retourner la vue HTML au lieu du PDF
+                // Log::info("[PdfGenerationController] Retour de la vue HTML pour débogage");
+                // return view('pdf.invoice', ['invoice' => $invoice, 'company' => $companyDetails]);
             } catch (\Exception $e) {
                 Log::error("[PdfGenerationController] Erreur lors du chargement de la facture: " . $e->getMessage());
                 Log::error("[PdfGenerationController] Trace: " . $e->getTraceAsString());
