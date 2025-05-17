@@ -21,6 +21,7 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Grid;
 use Filament\Forms\Components\Tabs; // Pour organiser les champs
+use Filament\Forms\Components\Placeholder;
 
 // Table Columns
 use Filament\Tables\Columns\TextColumn;
@@ -94,6 +95,35 @@ class ClientResource extends Resource
                                 ]),
                                 TextInput::make('billing_state_province')->label('État / Province'),
                             ]),
+                        Tabs\Tab::make('Informations Financières')
+                            ->schema([
+                                Placeholder::make('balance_due_placeholder')
+                                    ->label('Solde Dû Actuel')
+                                    ->content(function (?Client $record): string {
+                                        if (!$record || !$record->exists) {
+                                            return 'N/A';
+                                        }
+                                        
+                                        $balance = $record->balance_due;
+                                        $status = $balance > 0 ? ' (Débiteur)' : ' (Aucune dette)';
+                                        return number_format($balance, 2, ',', ' ') . ' €' . $status;
+                                    })
+                                    ->helperText('Montant total que ce client vous doit sur les factures non soldées.')
+                                    ->columnSpanFull(),
+                                
+                                Placeholder::make('total_revenue_placeholder')
+                                    ->label('Chiffre d\'Affaires Total avec ce Client')
+                                    ->content(function (?Client $record): string {
+                                        if (!$record || !$record->exists) {
+                                            return 'N/A';
+                                        }
+                                        
+                                        return number_format($record->total_revenue, 2, ',', ' ') . ' €';
+                                    })
+                                    ->columnSpanFull(),
+                            ])
+                            ->visible(fn (?Client $record) => $record && $record->exists),
+                            
                         Tabs\Tab::make('Autres Informations')
                             ->schema([
                                 Textarea::make('notes')
@@ -121,6 +151,20 @@ class ClientResource extends Resource
                 TextColumn::make('phone_number')
                     ->label('Téléphone')
                     ->searchable(),
+                // Nouvelle colonne pour le solde dû
+                TextColumn::make('balance_due') // S'appuie sur l'accesseur balanceDue()
+                    ->label('Solde Dû')
+                    ->money('eur') // Adaptez la devise
+                    ->alignRight()
+                    ->color(fn ($state) => $state > 0 ? 'danger' : 'success')
+                    ->sortable(), // Le tri se fera sur la valeur calculée
+                // Colonne pour le chiffre d'affaires total
+                TextColumn::make('total_revenue') // S'appuie sur l'accesseur totalRevenue()
+                    ->label('CA Total')
+                    ->money('eur')
+                    ->alignRight()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
                 IconColumn::make('is_active')
                     ->label('Actif')
                     ->boolean(),
