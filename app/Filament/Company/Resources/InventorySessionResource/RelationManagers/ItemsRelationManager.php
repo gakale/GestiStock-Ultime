@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Filament\Company\Resources\SupplierCreditNoteResource\RelationManagers;
+namespace App\Filament\Company\Resources\InventorySessionResource\RelationManagers;
 
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -8,35 +8,58 @@ use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Tables;
 use Filament\Tables\Table;
 use App\Models\Product;
-use Filament\Forms\Get;
-use Filament\Forms\Set;
-use Illuminate\Support\Collection;
+use App\Models\InventorySessionItem;
+use App\Models\InventorySession;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\Placeholder;
 use Filament\Tables\Columns\TextColumn;
+use Illuminate\Database\Eloquent\Model; // Pour le typage de $ownerRecord
 use Illuminate\Database\Eloquent\Builder;
-use Filament\Support\RawJs;
-use App\Models\InventorySessionItem;
 
 class ItemsRelationManager extends RelationManager
 {
     protected static string $relationship = 'items';
 
-    // protected static ?string $recordTitleAttribute = 'product_id'; // On va le rendre plus descriptif
+    protected static ?string $recordTitleAttribute = 'product.name'; // Essayons d'utiliser le nom du produit
+
+    // Détermine si le RelationManager peut être utilisé pour créer/modifier des items
+    // en fonction du statut de la session d'inventaire parente.
+    protected function canCreate(): bool
+    {
+        $ownerRecord = $this->getOwnerRecord();
+        return $ownerRecord && in_array($ownerRecord->status, ['draft', 'in_progress']);
+    }
+
+    protected function canEdit(Model $record): bool
+    {
+        $ownerRecord = $this->getOwnerRecord();
+        return $ownerRecord && in_array($ownerRecord->status, ['draft', 'in_progress']);
+    }
+
+    protected function canDelete(Model $record): bool
+    {
+        $ownerRecord = $this->getOwnerRecord();
+        return $ownerRecord && in_array($ownerRecord->status, ['draft', 'in_progress']);
+    }
+    
+    protected function canDeleteAny(): bool
+    {
+        $ownerRecord = $this->getOwnerRecord();
+        return $ownerRecord && in_array($ownerRecord->status, ['draft', 'in_progress']);
+    }
 
 
     public function form(Form $form): Form
     {
-        /** @var \App\Models\InventorySession $ownerRecord */
+        /** @var InventorySession $ownerRecord */
         $ownerRecord = $this->getOwnerRecord();
 
         return $form
             ->schema([
                 Select::make('product_id')
                     ->label('Produit')
-                    ->relationship('product', 'name', fn ($query) => $query->orderBy('name'))
+                    ->relationship('product', 'name', modifyQueryUsing: fn ($query) => $query->orderBy('name'))
                     ->searchable()
                     ->preload()
                     ->required()
@@ -53,12 +76,22 @@ class ItemsRelationManager extends RelationManager
                         }
                     })
                     // Empêche de sélectionner un produit déjà dans cette session d'inventaire
-                    ->unique(
-                        ignoreRecord: true,
-                        callback: function (Forms\Components\Select $component, $rule) use ($ownerRecord) {
-                            return $rule->where('inventory_session_id', $ownerRecord->id);
+                    // Utilisons une approche plus simple pour la validation d'unicité
+                    ->rules([
+                        function () use ($ownerRecord) {
+                            return function (string $attribute, $value, \Closure $fail) use ($ownerRecord) {
+                                // Vérifier si le produit est déjà dans cette session d'inventaire
+                                $exists = \App\Models\InventorySessionItem::query()
+                                    ->where('inventory_session_id', $ownerRecord->id)
+                                    ->where('product_id', $value)
+                                    ->exists();
+                                
+                                if ($exists) {
+                                    $fail("Ce produit est déjà dans cette session d'inventaire.");
+                                }
+                            };
                         }
-                    )
+                    ])
                     ->columnSpan(2)
                     ->disabled(fn (string $operation): bool => $operation === 'edit'), // Ne pas changer le produit en édition
 
@@ -105,7 +138,7 @@ class ItemsRelationManager extends RelationManager
 
     public function table(Table $table): Table
     {
-        /** @var \App\Models\InventorySession $ownerRecord */
+        /** @var InventorySession $ownerRecord */
         $ownerRecord = $this->getOwnerRecord();
 
         return $table
@@ -126,13 +159,12 @@ class ItemsRelationManager extends RelationManager
                     ->label('Qté Comptée')
                     ->numeric(decimalPlaces: 2)
                     ->alignRight()
-                    ->color(fn ($record) => $record->counted_quantity === null ? 'gray' : null),
+                    ->color(fn (InventorySessionItem $record) => $record->counted_quantity === null ? 'gray' : null),
                 TextColumn::make('difference_quantity') // S'appuie sur la colonne `storedAs` ou l'accesseur
                     ->label('Écart')
                     ->numeric(decimalPlaces: 2)
                     ->alignRight()
                     ->color(fn (?string $state): string => match (true) {
-                        is_null($state) => 'gray',
                         (float)$state > 0 => 'success', // Surplus
                         (float)$state < 0 => 'danger',  // Manquant
                         default => 'gray',              // Pas d'écart ou non compté
@@ -163,8 +195,8 @@ class ItemsRelationManager extends RelationManager
                     // }),
             ])
             ->actions([
-                Tables\Actions\EditAction::make()->visible(fn($record) => $this->canEdit($record)),
-                Tables\Actions\DeleteAction::make()->visible(fn($record) => $this->canDelete($record)),
+                Tables\Actions\EditAction::make()->visible(fn(InventorySessionItem $record) => $this->canEdit($record)),
+                Tables\Actions\DeleteAction::make()->visible(fn(InventorySessionItem $record) => $this->canDelete($record)),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
