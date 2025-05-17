@@ -8,11 +8,13 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes; // Si vous utilisez SoftDeletes
 use Illuminate\Support\Str;
 use Illuminate\Database\Eloquent\Relations\BelongsTo; // Ajouter
-
+use Spatie\Activitylog\Traits\LogsActivity;
+use Spatie\Activitylog\LogOptions;
+use App\Models\Traits\FormatsActivityLogEvents;
 
 class Product extends Model
 {
-    use HasFactory, HasUuids, SoftDeletes; // Ajoutez SoftDeletes si utilisé dans la migration
+    use HasFactory, HasUuids, SoftDeletes, LogsActivity, FormatsActivityLogEvents; // Ajoutez SoftDeletes si utilisé dans la migration
 
     /**
      * The attributes that are mass assignable.
@@ -113,5 +115,23 @@ class Product extends Model
         // ET que le seuil maximum est défini (non null)
         return $query->whereNotNull('stock_max_threshold')
                      ->whereColumn('stock_quantity', '>', 'stock_max_threshold');
+    }
+    
+    /**
+     * Configuration des logs d'activité
+     */
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logOnly([
+                'name', 'sku', 'description', 'product_category_id',
+                'purchase_price', 'selling_price', 'stock_quantity',
+                'is_active', 'stock_min_threshold', 'stock_reorder_point',
+                'stock_max_threshold'
+            ])
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs()
+            ->setDescriptionForEvent(fn(string $eventName) => "Le produit '{$this->name}' (SKU: {$this->sku}) a été {$this->formatEventName($eventName)}.")
+            ->useLogName('product_activity');
     }
 }

@@ -35,7 +35,7 @@ return [
      * It should implement the Spatie\Activitylog\Contracts\Activity interface
      * and extend Illuminate\Database\Eloquent\Model.
      */
-    'activity_model' => \Spatie\Activitylog\Models\Activity::class,
+    'activity_model' => \App\Models\ActivityLog::class,
 
     /*
      * This is the name of the table that will be created by the migration and
@@ -49,4 +49,24 @@ return [
      * Laravel's database.default will be used instead.
      */
     'database_connection' => env('ACTIVITY_LOGGER_DB_CONNECTION'),
+    
+    /*
+     * Cette option permet de définir si les activités doivent être enregistrées
+     * pour les utilisateurs authentifiés uniquement. Si défini à true, aucune activité
+     * ne sera enregistrée pour les utilisateurs invités.
+     */
+    'only_for_authenticated_users' => false,
+    
+    /*
+     * Cette option permet de spécifier les attributs sensibles qui ne doivent jamais
+     * être enregistrés dans les logs d'activité, quelle que soit la configuration du modèle.
+     */
+    'exclude_attributes' => ['password', 'secret', 'token', 'remember_token', 'api_token'],
+    
+    /*
+     * Si vous souhaitez personnaliser la façon dont les changements sont stockés,
+     * vous pouvez implémenter votre propre classe qui étend
+     * Spatie\Activitylog\ActivityLogger.
+     */
+    'logger' => \Spatie\Activitylog\ActivityLogger::class,
 ];

@@ -6,10 +6,13 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Spatie\Activitylog\Traits\LogsActivity;
+use Spatie\Activitylog\LogOptions;
+use App\Models\Traits\FormatsActivityLogEvents;
 
 class InvoiceItem extends Model
 {
-    use HasFactory, HasUuids;
+    use HasFactory, HasUuids, LogsActivity, FormatsActivityLogEvents;
 
     public $timestamps = true;
 
@@ -71,5 +74,25 @@ class InvoiceItem extends Model
     public function salesOrderItem(): BelongsTo
     {
         return $this->belongsTo(SalesOrderItem::class);
+    }
+    
+    /**
+     * Configuration des logs d'activité
+     */
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logOnly([
+                'invoice_id', 'product_id', 'product_name', 'product_sku',
+                'description', 'quantity', 'unit_price', 'discount_percentage',
+                'tax_rate', 'line_total'
+            ])
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs()
+            ->setDescriptionForEvent(function(string $eventName) {
+                $invoiceNumber = $this->invoice ? $this->invoice->invoice_number : 'inconnue';
+                return "La ligne de facture pour '{$this->product_name}' (Facture n°{$invoiceNumber}) a été {$this->formatEventName($eventName)}.";
+            })
+            ->useLogName('invoice_item_activity');
     }
 }

@@ -9,10 +9,13 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Support\Facades\DB;
+use Spatie\Activitylog\Traits\LogsActivity;
+use Spatie\Activitylog\LogOptions;
+use App\Models\Traits\FormatsActivityLogEvents;
 
 class Client extends Model
 {
-    use HasFactory, HasUuids, SoftDeletes;
+    use HasFactory, HasUuids, SoftDeletes, LogsActivity, FormatsActivityLogEvents;
 
     protected $fillable = [
         'type',
@@ -88,4 +91,20 @@ class Client extends Model
     // {
     //     return $this->hasMany(ClientShippingAddress::class);
     // }
+
+    /**
+     * Configuration des logs d'activité
+     */
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logOnly([
+                'company_name', 'first_name', 'last_name', 'email',
+                'phone_number', 'billing_address_line1', 'billing_city', 'is_active'
+            ])
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs()
+            ->setDescriptionForEvent(fn(string $eventName) => "Le client '{$this->getDisplayNameAttribute()}' a été {$this->formatEventName($eventName)}.")
+            ->useLogName('client_activity');
+    }
 }

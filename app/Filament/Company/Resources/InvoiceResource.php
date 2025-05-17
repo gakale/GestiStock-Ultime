@@ -337,7 +337,8 @@ class InvoiceResource extends Resource
                     Tables\Actions\ForceDeleteBulkAction::make(),
                     Tables\Actions\RestoreBulkAction::make(),
                 ]),
-            ]);
+            ])
+            ->defaultSort('invoice_date', 'desc');
     }
 
     public static function getRelations(): array
@@ -362,6 +363,7 @@ class InvoiceResource extends Resource
         return parent::getEloquentQuery()
             ->withoutGlobalScopes([
                 SoftDeletingScope::class,
-            ]);
+            ])
+            ->orderBy('created_at', 'desc');
     }
 }

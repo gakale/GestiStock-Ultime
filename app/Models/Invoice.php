@@ -9,10 +9,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Carbon\Carbon;
+use Spatie\Activitylog\Traits\LogsActivity;
+use Spatie\Activitylog\LogOptions;
+use App\Models\Traits\FormatsActivityLogEvents;
 
 class Invoice extends Model
 {
-    use HasFactory, HasUuids, SoftDeletes;
+    use HasFactory, HasUuids, SoftDeletes, LogsActivity, FormatsActivityLogEvents;
 
     protected $fillable = [
         'invoice_number',
@@ -115,5 +118,25 @@ class Invoice extends Model
         // total_amount = (sous-total des lignes après remises de ligne) + (taxes des lignes) - (remise globale) + (frais de port)
         $this->total_amount = $this->subtotal + $this->taxes_amount - $this->discount_amount + $this->shipping_charges;
         $this->saveQuietly();
+    }
+    
+    /**
+     * Configuration des logs d'activité
+     */
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logOnly([
+                'invoice_number', 'client_id', 'invoice_date', 'due_date',
+                'status', 'subtotal', 'taxes_amount', 'discount_amount',
+                'shipping_charges', 'total_amount', 'notes', 'payment_terms'
+            ])
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs()
+            ->setDescriptionForEvent(function(string $eventName) {
+                $clientName = $this->client ? $this->client->getDisplayNameAttribute() : 'Client inconnu';
+                return "La facture n°{$this->invoice_number} pour {$clientName} a été {$this->formatEventName($eventName)}.";
+            })
+            ->useLogName('invoice_activity');
     }
 }

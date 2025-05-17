@@ -6,10 +6,13 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Spatie\Activitylog\Traits\LogsActivity;
+use Spatie\Activitylog\LogOptions;
+use App\Models\Traits\FormatsActivityLogEvents;
 
 class Supplier extends Model
 {
-    use HasFactory, HasUuids, SoftDeletes;
+    use HasFactory, HasUuids, SoftDeletes, LogsActivity, FormatsActivityLogEvents;
 
     protected $fillable = [
         'company_name',
@@ -49,4 +52,20 @@ class Supplier extends Model
     // {
     //     return $this->hasMany(PurchaseOrder::class);
     // }
+    
+    /**
+     * Configuration des logs d'activité
+     */
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logOnly([
+                'company_name', 'contact_first_name', 'contact_last_name', 'email',
+                'phone_number', 'address_line1', 'city', 'is_active', 'payment_terms'
+            ])
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs()
+            ->setDescriptionForEvent(fn(string $eventName) => "Le fournisseur '{$this->getDisplayNameAttribute()}' a été {$this->formatEventName($eventName)}.")
+            ->useLogName('supplier_activity');
+    }
 }
