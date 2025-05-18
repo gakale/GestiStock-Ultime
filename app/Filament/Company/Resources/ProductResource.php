@@ -6,6 +6,7 @@ use App\Filament\Company\Resources\ProductResource\Pages;
 // use App\Filament\Company\Resources\ProductResource\RelationManagers; // Si vous en avez
 use App\Models\Product;
 use App\Models\ProductCategory;
+use App\Models\UnitOfMeasure;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -95,6 +96,35 @@ class ProductResource extends Resource
                             ->minValue(0),
                     ]),
                     
+                Section::make('Unités de Mesure')
+                    ->columns(3)
+                    ->schema([
+                        FormsSelect::make('stock_unit_id')
+                            ->label('Unité de Stock Principale')
+                            ->relationship('stockUnit', 'name')
+                            ->options(UnitOfMeasure::where('is_active', true)->pluck('name', 'id'))
+                            ->searchable()
+                            ->preload()
+                            ->required()
+                            ->helperText('L\'unité dans laquelle le stock est compté et géré.'),
+                        FormsSelect::make('purchase_unit_id')
+                            ->label('Unité d\'Achat par Défaut')
+                            ->relationship('purchaseUnit', 'name')
+                            ->options(UnitOfMeasure::where('is_active', true)->pluck('name', 'id'))
+                            ->searchable()
+                            ->preload()
+                            ->nullable()
+                            ->helperText('L\'unité typiquement utilisée pour acheter ce produit.'),
+                        FormsSelect::make('sales_unit_id')
+                            ->label('Unité de Vente par Défaut')
+                            ->relationship('salesUnit', 'name')
+                            ->options(UnitOfMeasure::where('is_active', true)->pluck('name', 'id'))
+                            ->searchable()
+                            ->preload()
+                            ->nullable()
+                            ->helperText('L\'unité typiquement utilisée pour vendre ce produit.'),
+                    ]),
+                    
                 Section::make('Stock et Seuils')
                     ->columns(2)
                     ->schema([
@@ -103,7 +133,12 @@ class ProductResource extends Resource
                             ->integer()
                             ->required()
                             ->default(0)
-                            ->minValue(0),
+                            ->minValue(0)
+                            ->helperText(fn (Forms\Get $get): ?string => 
+                                ($unitId = $get('stock_unit_id')) ? 
+                                ('En ' . (UnitOfMeasure::find($unitId)?->name ?? 'unités de stock')) : 
+                                'Veuillez d\'abord sélectionner une unité de stock.'
+                            ),
                         TextInput::make('stock_min_threshold')
                             ->label('Seuil de Stock Minimum')
                             ->numeric()
@@ -168,7 +203,8 @@ class ProductResource extends Resource
                     ->color(fn ($record) => 
                         $record->stock_min_threshold !== null && $record->stock_quantity <= $record->stock_min_threshold ? 'danger' : 
                         ($record->stock_reorder_point !== null && $record->stock_quantity <= $record->stock_reorder_point ? 'warning' : 'success')
-                    ),
+                    )
+                    ->description(fn (Product $record): ?string => $record->stockUnit?->symbol),
                 TextColumn::make('stock_min_threshold')
                     ->label('Stock Min')
                     ->numeric()
@@ -182,6 +218,18 @@ class ProductResource extends Resource
                 TextColumn::make('stock_max_threshold')
                     ->label('Stock Max')
                     ->numeric()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('stockUnit.name')
+                    ->label('Unité Stock')
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('purchaseUnit.name')
+                    ->label('Unité Achat')
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('salesUnit.name')
+                    ->label('Unité Vente')
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
                 IconColumn::make('is_active')

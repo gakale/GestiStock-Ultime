@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -26,8 +28,8 @@ class StockMovement extends Model
     ];
 
     protected $casts = [
-        'quantity_changed' => 'integer',
-        'new_stock_quantity_after_movement' => 'integer',
+        'quantity_changed' => 'decimal:2',
+        'new_stock_quantity_after_movement' => 'decimal:2',
         'movement_date' => 'datetime',
     ];
 
@@ -60,6 +62,14 @@ class StockMovement extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(TenantUser::class, 'user_id');
+    }
+
+    /**
+     * Relation vers l'unité de mesure du mouvement (transaction_unit_id).
+     */
+    public function unit(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\UnitOfMeasure::class, 'transaction_unit_id');
     }
 
     /**

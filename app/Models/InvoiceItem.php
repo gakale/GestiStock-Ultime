@@ -1,11 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
+use App\Services\UnitConversionService;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\Log;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\Activitylog\LogOptions;
 use App\Models\Traits\FormatsActivityLogEvents;
@@ -21,9 +26,10 @@ class InvoiceItem extends Model
         'product_id',
         'product_name',
         'product_sku',
+        'transaction_unit_id', // Nouveau champ pour l'unité de vente
         'description',
-        'quantity',
-        'unit_price',
+        'quantity',            // Est maintenant la transaction_quantity
+        'unit_price',          // Est maintenant le transaction_unit_price
         'discount_percentage',
         'tax_rate',
         'line_total',
@@ -31,7 +37,7 @@ class InvoiceItem extends Model
     ];
 
     protected $casts = [
-        'quantity' => 'integer',
+        'quantity' => 'decimal:2',    // Changé de integer à decimal pour plus de flexibilité
         'unit_price' => 'decimal:2',
         'discount_percentage' => 'decimal:2',
         'tax_rate' => 'decimal:2',
@@ -77,6 +83,14 @@ class InvoiceItem extends Model
     }
     
     /**
+     * Relation avec l'unité de transaction (unité dans laquelle le produit est vendu)
+     */
+    public function transactionUnit(): BelongsTo
+    {
+        return $this->belongsTo(UnitOfMeasure::class, 'transaction_unit_id');
+    }
+    
+    /**
      * Configuration des logs d'activité
      */
     public function getActivitylogOptions(): LogOptions
@@ -84,7 +98,7 @@ class InvoiceItem extends Model
         return LogOptions::defaults()
             ->logOnly([
                 'invoice_id', 'product_id', 'product_name', 'product_sku',
-                'description', 'quantity', 'unit_price', 'discount_percentage',
+                'transaction_unit_id', 'description', 'quantity', 'unit_price', 'discount_percentage',
                 'tax_rate', 'line_total'
             ])
             ->logOnlyDirty()

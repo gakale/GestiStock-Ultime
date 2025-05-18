@@ -53,6 +53,11 @@ class StockMovementResource extends Resource
                     ->label('Qté Modifiée')
                     ->numeric()
                     ->sortable(),
+                TextColumn::make('unit.name')
+                    ->label('Unité')
+                    ->sortable()
+                    ->searchable()
+                    ->placeholder('N/A'),
                 TextColumn::make('new_stock_quantity_after_movement')
                     ->label('Nouveau Stock')
                     ->numeric()

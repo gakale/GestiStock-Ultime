@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Observers;
 
 use App\Models\GoodsReceiptItem;
@@ -8,6 +10,7 @@ use App\Models\PurchaseOrder;
 use App\Models\StockMovement; // Importer le modèle StockMovement
 use App\Models\GoodsReceipt;  // Importer GoodsReceipt pour related_document_type
 use App\Models\TenantUser; // Importer TenantUser pour la vérification de type
+use App\Models\UnitOfMeasure; // Importer UnitOfMeasure pour les conversions
 use Illuminate\Support\Facades\Log;
 
 class GoodsReceiptItemObserver
@@ -32,16 +35,29 @@ class GoodsReceiptItemObserver
         }
 
         // 2. Créer un mouvement de stock
+        $notes = 'Réception depuis commande fournisseur: ' . $goodsReceiptItem->goodsReceipt?->purchaseOrder?->order_number . ' / BL: ' . $goodsReceiptItem->goodsReceipt?->supplier_delivery_note_number;
+        
+        // Ajouter les informations d'unité de transaction si disponibles
+        if ($goodsReceiptItem->transaction_unit_id && $goodsReceiptItem->transaction_quantity) {
+            $transactionUnit = $goodsReceiptItem->transactionUnit;
+            $notes .= " - Reçu: {$goodsReceiptItem->transaction_quantity} {$transactionUnit?->symbol}";
+            
+            // Si l'unité de transaction est différente de l'unité de stock
+            if ($product && $product->stock_unit_id && $product->stock_unit_id != $goodsReceiptItem->transaction_unit_id) {
+                $notes .= " (converti en {$goodsReceiptItem->quantity_received} {$product->stockUnit?->symbol})"; 
+            }
+        }
+        
         StockMovement::create([
             'product_id' => $goodsReceiptItem->product_id,
             'type' => 'purchase_receipt', // Type de mouvement clair
-            'quantity_changed' => $goodsReceiptItem->quantity_received, // Positive
+            'quantity_changed' => $goodsReceiptItem->quantity_received, // Positive - toujours en unité de stock
             'new_stock_quantity_after_movement' => $newStockQuantity,
             'related_document_type' => GoodsReceipt::class, // Nom de la classe du modèle lié
             'related_document_id' => $goodsReceiptItem->goods_receipt_id,
             'user_id' => $goodsReceiptItem->goodsReceipt?->received_by_user_id, // Opérateur
             'movement_date' => $goodsReceiptItem->goodsReceipt?->receipt_date ?? now(),
-            'notes' => 'Réception depuis commande fournisseur: ' . $goodsReceiptItem->goodsReceipt?->purchaseOrder?->order_number . ' / BL: ' . $goodsReceiptItem->goodsReceipt?->supplier_delivery_note_number,
+            'notes' => $notes,
         ]);
 
 
@@ -93,16 +109,29 @@ class GoodsReceiptItemObserver
         }
 
         // 2. Créer un mouvement de stock d'annulation/correction
+        $reason = 'Annulation item de réception GRN: ' . $goodsReceiptItem->goodsReceipt->receipt_number;
+        
+        // Ajouter les informations d'unité si disponibles
+        if ($goodsReceiptItem->transaction_unit_id && $goodsReceiptItem->transaction_quantity) {
+            $transactionUnit = $goodsReceiptItem->transactionUnit;
+            $reason .= " - Article: {$product->name}, Quantité: {$goodsReceiptItem->transaction_quantity} {$transactionUnit?->symbol}";
+            
+            // Si l'unité de transaction est différente de l'unité de stock
+            if ($product && $product->stock_unit_id && $product->stock_unit_id != $goodsReceiptItem->transaction_unit_id) {
+                $reason .= " (converti en {$goodsReceiptItem->quantity_received} {$product->stockUnit?->symbol})"; 
+            }
+        }
+        
         StockMovement::create([
             'product_id' => $goodsReceiptItem->product_id,
             'type' => 'purchase_receipt_cancellation', // Type de mouvement clair
-            'quantity_changed' => -$goodsReceiptItem->quantity_received, // Négative
+            'quantity_changed' => -$goodsReceiptItem->quantity_received, // Négative - toujours en unité de stock
             'new_stock_quantity_after_movement' => $newStockQuantity,
             'related_document_type' => GoodsReceipt::class,
             'related_document_id' => $goodsReceiptItem->goods_receipt_id,
             'user_id' => auth()->check() && auth()->user() instanceof TenantUser ? auth()->user()->getKey() : null, // L'utilisateur qui annule
             'movement_date' => now(), // La date de l'annulation
-            'reason' => 'Annulation item de réception GRN: ' . $goodsReceiptItem->goodsReceipt->receipt_number,
+            'reason' => $reason,
         ]);
 
 

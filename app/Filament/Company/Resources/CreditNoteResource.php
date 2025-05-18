@@ -9,6 +9,7 @@ use App\Models\CreditNoteItem;
 use App\Models\Client;
 use App\Models\Invoice;
 use App\Models\Product;
+use App\Models\UnitOfMeasure;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -145,7 +146,14 @@ class CreditNoteResource extends Resource
                                                     $set('product_sku', $product->sku);
                                                     $set('unit_price', $product->selling_price);
                                                     $set('tax_rate', $product->tax_rate);
+                                                    
+                                                    // Définir l'unité de vente par défaut du produit
+                                                    if ($product->sales_unit_id) {
+                                                        $set('transaction_unit_id', $product->sales_unit_id);
+                                                    }
                                                 }
+                                            } else {
+                                                $set('transaction_unit_id', null);
                                             }
                                         })
                                         ->columnSpan(3),
@@ -165,7 +173,8 @@ class CreditNoteResource extends Resource
                                         ->label('Quantité')
                                         ->numeric()
                                         ->default(1)
-                                        ->minValue(1)
+                                        ->minValue(0.01)
+                                        ->step(0.01)
                                         ->required()
                                         ->reactive()
                                         ->afterStateUpdated(fn (Set $set, Get $get) => 
@@ -443,7 +452,7 @@ class CreditNoteResource extends Resource
     public static function getRelations(): array
     {
         return [
-            // Pas de relations supplémentaires pour l'instant
+            RelationManagers\ItemsRelationManager::class,
         ];
     }
     

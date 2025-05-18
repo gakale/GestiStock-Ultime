@@ -3,10 +3,11 @@
 namespace App\Filament\Company\Resources;
 
 use App\Filament\Company\Resources\InvoiceResource\Pages;
-// use App\Filament\Company\Resources\InvoiceResource\RelationManagers;
+use App\Filament\Company\Resources\InvoiceResource\RelationManagers;
 use App\Models\Invoice;
 use App\Models\Client;
 use App\Models\Product;
+use App\Models\UnitOfMeasure;
 use App\Filament\Company\Resources\ClientResource;
 // use App\Models\TenantUser; // Si vous avez besoin de lier l'utilisateur créateur explicitement au lieu du boot du modèle
 use Filament\Forms;
@@ -139,16 +140,67 @@ class InvoiceResource extends Resource
                                             $set('unit_price', $product?->selling_price ?? 0);
                                             $set('product_name', $product?->name); // Copie
                                             $set('product_sku', $product?->sku);   // Copie
+                                            
+                                            // Définir l'unité de vente par défaut du produit
+                                            if ($product && $product->sales_unit_id) {
+                                                $set('transaction_unit_id', $product->sales_unit_id);
+                                            }
+                                            
                                             // $set('description', $get('description') ?? $product?->description); // Pré-remplir description si vide
                                             // $set('tax_rate', $product?->default_tax_rate ?? 20.00); // Pré-remplir TVA
                                         } else { // Si le produit est déselectionné
                                             $set('unit_price', 0);
                                             $set('product_name', null);
                                             $set('product_sku', null);
+                                            $set('transaction_unit_id', null);
                                         }
                                     })
                                     ->required()
-                                    ->columnSpan(3),
+                                    ->columnSpan(2),
+                                    
+                                Select::make('transaction_unit_id')
+                                    ->label('Unité')
+                                    ->options(function (Get $get) {
+                                        $productId = $get('product_id');
+                                        if (!$productId) {
+                                            return [];
+                                        }
+                                        
+                                        $product = Product::find($productId);
+                                        if (!$product) {
+                                            return [];
+                                        }
+                                        
+                                        // Récupérer toutes les unités compatibles avec ce produit
+                                        // Cela inclut l'unité de stock, l'unité d'achat, l'unité de vente et leurs unités dérivées
+                                        $unitIds = [];
+                                        
+                                        // Ajouter l'unité de vente si définie
+                                        if ($product->sales_unit_id) {
+                                            $unitIds[] = $product->sales_unit_id;
+                                            
+                                            // Ajouter les unités dérivées de l'unité de vente
+                                            $derivedUnits = UnitOfMeasure::where('base_unit_id', $product->sales_unit_id)->pluck('id')->toArray();
+                                            $unitIds = array_merge($unitIds, $derivedUnits);
+                                        }
+                                        
+                                        // Ajouter l'unité de stock si différente de l'unité de vente
+                                        if ($product->stock_unit_id && !in_array($product->stock_unit_id, $unitIds)) {
+                                            $unitIds[] = $product->stock_unit_id;
+                                            
+                                            // Ajouter les unités dérivées de l'unité de stock
+                                            $derivedUnits = UnitOfMeasure::where('base_unit_id', $product->stock_unit_id)->pluck('id')->toArray();
+                                            $unitIds = array_merge($unitIds, $derivedUnits);
+                                        }
+                                        
+                                        return UnitOfMeasure::whereIn('id', $unitIds)
+                                            ->get()
+                                            ->pluck('name_with_symbol', 'id')
+                                            ->toArray();
+                                    })
+                                    ->reactive()
+                                    ->required()
+                                    ->columnSpan(1),
                                 Hidden::make('product_name')->dehydrated(), // Champs cachés pour stocker les copies
                                 Hidden::make('product_sku')->dehydrated(),
 
@@ -157,10 +209,11 @@ class InvoiceResource extends Resource
                                     ->rows(1)->columnSpanFull(),
                                 TextInput::make('quantity')
                                     ->label('Qté')
-                                    ->integer()
+                                    ->numeric()
                                     ->required()
                                     ->default(1)
-                                    ->minValue(1)
+                                    ->minValue(0.01)
+                                    ->step(0.01)
                                     ->reactive()
                                     ->columnSpan(1),
                                 TextInput::make('unit_price')
@@ -195,7 +248,7 @@ class InvoiceResource extends Resource
 
                             ])
                             ->addActionLabel('Ajouter une ligne')
-                            ->columns(5)
+                            ->columns(6)
                             ->defaultItems(1)
                             ->reorderableWithButtons()
                             ->collapsible()
@@ -344,6 +397,7 @@ class InvoiceResource extends Resource
     public static function getRelations(): array
     {
         return [
+            RelationManagers\ItemsRelationManager::class,
             // RelationManagers.PaymentRelationManager::class,
         ];
     }

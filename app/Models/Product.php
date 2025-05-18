@@ -35,6 +35,10 @@ class Product extends Model
         'barcode',
         'is_active',
         'product_category_id',
+        // Nouveaux champs d'unité
+        'stock_unit_id',
+        'purchase_unit_id',
+        'sales_unit_id',
     ];
 
     /**
@@ -78,10 +82,26 @@ class Product extends Model
         });
     }
 
-    // Relation (à ajouter plus tard quand on aura les catégories)
+    // Relation avec la catégorie de produit
     public function category(): BelongsTo
     {
         return $this->belongsTo(ProductCategory::class, 'product_category_id');
+    }
+    
+    // Relations vers les unités de mesure
+    public function stockUnit(): BelongsTo
+    {
+        return $this->belongsTo(UnitOfMeasure::class, 'stock_unit_id');
+    }
+
+    public function purchaseUnit(): BelongsTo
+    {
+        return $this->belongsTo(UnitOfMeasure::class, 'purchase_unit_id');
+    }
+
+    public function salesUnit(): BelongsTo
+    {
+        return $this->belongsTo(UnitOfMeasure::class, 'sales_unit_id');
     }
     
     /**
@@ -127,7 +147,8 @@ class Product extends Model
                 'name', 'sku', 'description', 'product_category_id',
                 'purchase_price', 'selling_price', 'stock_quantity',
                 'is_active', 'stock_min_threshold', 'stock_reorder_point',
-                'stock_max_threshold'
+                'stock_max_threshold',
+                'stock_unit_id', 'purchase_unit_id', 'sales_unit_id' // Nouveaux champs d'unités
             ])
             ->logOnlyDirty()
             ->dontSubmitEmptyLogs()

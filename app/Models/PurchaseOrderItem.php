@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -16,15 +18,16 @@ class PurchaseOrderItem extends Model
         'product_id',
         'product_name',
         'product_sku',
-        'quantity',
-        'unit_price',
+        'transaction_unit_id', // Nouveau champ pour l'unité de commande
+        'quantity',            // Est maintenant la transaction_quantity
+        'unit_price',          // Est maintenant le transaction_unit_price
         'discount_percentage',
         'tax_rate',
         'line_total',
     ];
 
     protected $casts = [
-        'quantity' => 'integer',
+        'quantity' => 'decimal:2',    // Changé de integer à decimal pour plus de flexibilité
         'unit_price' => 'decimal:2',
         'discount_percentage' => 'decimal:2',
         'tax_rate' => 'decimal:2',
@@ -65,5 +68,13 @@ class PurchaseOrderItem extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+    
+    /**
+     * Relation avec l'unité de transaction (unité dans laquelle le produit est commandé)
+     */
+    public function transactionUnit(): BelongsTo
+    {
+        return $this->belongsTo(UnitOfMeasure::class, 'transaction_unit_id');
     }
 }

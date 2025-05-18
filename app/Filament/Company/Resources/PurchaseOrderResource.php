@@ -8,6 +8,7 @@ use App\Models\PurchaseOrder;
 use App\Models\Product; // Pour le selecteur de produits
 use App\Models\Supplier; // Pour le selecteur de fournisseurs
 use App\Models\TenantUser; // Pour l'utilisateur
+use App\Models\UnitOfMeasure; // Pour les unités de mesure
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -94,22 +95,78 @@ class PurchaseOrderResource extends Resource
                             ->schema([
                                 Select::make('product_id')
                                     ->label('Produit')
-                                    ->options(Product::query()->pluck('name', 'id')) // Simple pour l'instant
+                                    ->options(Product::query()->pluck('name', 'id'))
                                     ->searchable()
                                     ->preload()
                                     ->reactive()
                                     ->afterStateUpdated(function (Set $set, ?string $state) {
                                         if ($state) {
                                             $product = Product::find($state);
-                                            $set('unit_price', $product?->purchase_price ?? $product?->selling_price ?? 0);
-                                            $set('product_name', $product?->name); // Copier le nom
-                                            $set('product_sku', $product?->sku);   // Copier le SKU
+                                            if ($product) {
+                                                // Pré-remplir les champs avec les données du produit
+                                                $set('product_name', $product->name);
+                                                $set('product_sku', $product->sku);
+                                                $set('unit_price', $product->purchase_price ?? $product->selling_price ?? 0);
+                                                
+                                                // Pré-remplir l'unité de transaction avec l'unité d'achat par défaut du produit
+                                                $set('transaction_unit_id', $product->purchase_unit_id ?? $product->stock_unit_id);
+                                            }
+                                        } else {
+                                            // Réinitialiser les champs si aucun produit n'est sélectionné
+                                            $set('product_name', null);
+                                            $set('product_sku', null);
+                                            $set('unit_price', null);
+                                            $set('transaction_unit_id', null);
                                         }
                                     })
                                     ->required()
                                     ->columnSpan(3),
-                                TextInput::make('product_name')->hidden()->dehydrated(true)->required(), // Stocker la copie
-                                TextInput::make('product_sku')->hidden()->dehydrated(true)->required(),   // Stocker la copie
+                                Hidden::make('product_name')->dehydrated(), // Champs cachés pour stocker les copies
+                                Hidden::make('product_sku')->dehydrated(),
+                                
+                                Select::make('transaction_unit_id')
+                                    ->label('Unité de Commande')
+                                    ->options(function (Get $get) {
+                                        $productId = $get('product_id');
+                                        if (!$productId) {
+                                            return [];
+                                        }
+                                        
+                                        $product = Product::find($productId);
+                                        if (!$product) {
+                                            return [];
+                                        }
+                                        
+                                        // Récupérer toutes les unités compatibles avec ce produit
+                                        $unitIds = [];
+                                        
+                                        // Ajouter l'unité d'achat si définie
+                                        if ($product->purchase_unit_id) {
+                                            $unitIds[] = $product->purchase_unit_id;
+                                            
+                                            // Ajouter les unités dérivées de l'unité d'achat
+                                            $derivedUnits = UnitOfMeasure::where('base_unit_id', $product->purchase_unit_id)->pluck('id')->toArray();
+                                            $unitIds = array_merge($unitIds, $derivedUnits);
+                                        }
+                                        
+                                        // Ajouter l'unité de stock si différente de l'unité d'achat
+                                        if ($product->stock_unit_id && !in_array($product->stock_unit_id, $unitIds)) {
+                                            $unitIds[] = $product->stock_unit_id;
+                                            
+                                            // Ajouter les unités dérivées de l'unité de stock
+                                            $derivedUnits = UnitOfMeasure::where('base_unit_id', $product->stock_unit_id)->pluck('id')->toArray();
+                                            $unitIds = array_merge($unitIds, $derivedUnits);
+                                        }
+                                        
+                                        return UnitOfMeasure::whereIn('id', $unitIds)
+                                            ->get()
+                                            ->pluck('name_with_symbol', 'id')
+                                            ->toArray();
+                                    })
+                                    ->searchable()
+                                    ->preload()
+                                    ->required()
+                                    ->reactive(),
                                 TextInput::make('quantity')
                                     ->label('Quantité')
                                     ->integer()
@@ -230,10 +287,17 @@ class PurchaseOrderResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->defaultSort('order_date', 'desc') // Tri par défaut décroissant sur la date de commande
             ->columns([
                 TextColumn::make('order_number')->label('N° Commande')->searchable()->sortable(),
                 TextColumn::make('supplier.company_name')->label('Fournisseur')->searchable()->sortable(),
                 TextColumn::make('order_date')->label('Date')->date()->sortable(),
+                TextColumn::make('items_count')
+                    ->label('Articles')
+                    ->getStateUsing(function ($record) {
+                        return $record->items()->count() . ' article(s)';
+                    })
+                    ->sortable(),
                 TextColumn::make('total_amount')->label('Total')->money('eur')->sortable(),
                 BadgeColumn::make('status')
                     ->label('Statut')
@@ -272,7 +336,7 @@ class PurchaseOrderResource extends Resource
     public static function getRelations(): array
     {
         return [
-            // RelationManagers\ItemsRelationManager::class, // Si on préfère une table séparée pour les items
+            RelationManagers\ItemsRelationManager::class, // Activé pour afficher les items dans une table séparée
         ];
     }
 
