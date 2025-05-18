@@ -29,6 +29,8 @@ use App\Observers\SupplierCreditNoteObserver;
 use App\Observers\SupplierCreditNoteItemObserver;
 use Spatie\Activitylog\Models\Activity;
 use App\Observers\ActivityLogObserver;
+use App\Models\GoodsReceipt;
+use App\Observers\GoodsReceiptObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -61,5 +63,6 @@ class AppServiceProvider extends ServiceProvider
         
         // Observateur pour les logs d'activité
         Activity::observe(ActivityLogObserver::class);
+        GoodsReceipt::observe(GoodsReceiptObserver::class);
     }
 }

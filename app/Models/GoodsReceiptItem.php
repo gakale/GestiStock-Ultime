@@ -9,14 +9,13 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
 
 class GoodsReceiptItem extends Model
 {
     use HasFactory, HasUuids;
 
-    public $timestamps = true; // Activer les timestamps si besoin
+    public $timestamps = true;
 
     protected $fillable = [
         'goods_receipt_id',
@@ -25,10 +24,8 @@ class GoodsReceiptItem extends Model
         'quantity_ordered',
         'transaction_unit_id',
         'transaction_quantity',
-        'quantity_received',
+        'quantity_received', // Quantité en unité de STOCK du produit
         'unit_price',
-        // 'batch_number',
-        // 'expiry_date',
         'notes',
     ];
 
@@ -37,68 +34,88 @@ class GoodsReceiptItem extends Model
         'transaction_quantity' => 'decimal:2',
         'quantity_received' => 'decimal:2',
         'unit_price' => 'decimal:2',
-        // 'expiry_date' => 'date',
     ];
 
-    // Relation avec l'unité de transaction
     public function transactionUnit(): BelongsTo
     {
         return $this->belongsTo(UnitOfMeasure::class, 'transaction_unit_id');
     }
-    
-    // Observer pour gérer la mise à jour du stock (voir Étape 4)
-    
-    // Méthode pour convertir la quantité de transaction en quantité de stock
+
     protected static function boot()
     {
         parent::boot();
 
-        static::saving(function ($item) {
-            if ($item->product_id && $item->transaction_unit_id && !is_null($item->transaction_quantity)) {
-                $product = $item->product; // Eager load si possible avant
-                $transactionUnit = UnitOfMeasure::find($item->transaction_unit_id); // Eager load si possible
+        static::saving(function (GoodsReceiptItem $item) {
+            if ($item->product_id && $item->transaction_unit_id && !is_null($item->transaction_quantity) && $item->transaction_quantity != 0) {
+                // Eager load product et ses unités pour éviter requêtes N+1
+                $product = Product::with('stockUnit')->find($item->product_id);
+                $transactionUnit = UnitOfMeasure::find($item->transaction_unit_id);
 
                 if ($product && $product->stockUnit && $transactionUnit) {
+                    $conversionService = app(UnitConversionService::class);
                     try {
-                        // Utiliser le service de conversion d'unités
-                        $conversionService = App::make(UnitConversionService::class);
                         $item->quantity_received = $conversionService->convert(
-                            $product,
                             (float)$item->transaction_quantity,
                             $transactionUnit,
-                            $product->stockUnit
+                            $product->stockUnit, // Unité de stock du produit
+                            $product // Contexte du produit
                         );
-                    } catch (\Exception $e) {
-                        // Journaliser l'erreur
-                        Log::error('Erreur de conversion d\'unité', [
-                            'product_id' => $product->id,
-                            'product_name' => $product->name,
-                            'transaction_unit_id' => $item->transaction_unit_id,
-                            'transaction_unit_name' => $transactionUnit->name,
-                            'stock_unit_id' => $product->stock_unit_id,
-                            'stock_unit_name' => $product->stockUnit->name,
+                        
+                        Log::info('[GoodsReceiptItem Saving] Conversion réussie', [
+                            'product' => $product->name,
                             'transaction_quantity' => $item->transaction_quantity,
+                            'transaction_unit' => $transactionUnit->symbol,
+                            'stock_unit' => $product->stockUnit->symbol,
+                            'quantity_received' => $item->quantity_received
+                        ]);
+
+                    } catch (\InvalidArgumentException $e) {
+                        Log::error('[GoodsReceiptItem Saving] Erreur de conversion', [
+                            'product' => $product->name,
+                            'error' => $e->getMessage(),
+                            'transaction_quantity' => $item->transaction_quantity,
+                            'transaction_unit' => $transactionUnit->symbol,
+                            'stock_unit' => $product->stockUnit->symbol
+                        ]);
+
+                        // Option 1: Bloquer la sauvegarde (désactivé pour permettre la sauvegarde)
+                        // throw $e;
+                        
+                        // Option 2: Mettre quantity_received à 0 (au lieu de null pour respecter la contrainte NOT NULL)
+                        $item->quantity_received = 0;
+                        
+                        // Logguer l'erreur pour suivi
+                        Log::warning('[GoodsReceiptItem] Erreur de conversion, quantity_received mis à 0', [
+                            'product_id' => $product->id,
                             'error' => $e->getMessage()
                         ]);
-                        
-                        // Relancer l'exception pour que l'utilisateur soit informé
-                        throw $e;
                     }
                 } else {
-                    // Si pas de produit, pas d'unité de stock ou pas d'unité de transaction, pas de conversion.
-                    $item->quantity_received = $item->transaction_quantity;
-                    
-                    // Journaliser l'avertissement
-                    if ($product && !$product->stock_unit_id) {
-                        Log::warning('Conversion impossible : pas d\'unité de stock définie pour le produit', [
-                            'product_id' => $product->id,
-                            'product_name' => $product->name
-                        ]);
+                    $missingData = [];
+                    if (!$product) $missingData[] = 'produit';
+                    if ($product && !$product->stockUnit) $missingData[] = 'unité de stock';
+                    if (!$transactionUnit) $missingData[] = 'unité de transaction';
+
+                    Log::warning('[GoodsReceiptItem Saving] Données manquantes pour la conversion', [
+                        'missing' => implode(', ', $missingData),
+                        'product_id' => $item->product_id,
+                        'transaction_unit_id' => $item->transaction_unit_id
+                    ]);
+
+                    // Si même unité ou pas d'unité de stock, utiliser la quantité de transaction
+                    if ($product && $transactionUnit && 
+                        (!$product->stock_unit_id || $product->stock_unit_id === $item->transaction_unit_id)) {
+                        $item->quantity_received = (float) $item->transaction_quantity;
+                    } else {
+                        throw new \InvalidArgumentException(
+                            'Impossible de convertir la quantité : ' . implode(' et ', $missingData) . ' manquant(s)'
+                        );
                     }
                 }
+            } elseif ($item->transaction_quantity === 0) {
+                $item->quantity_received = 0;
             } elseif (is_null($item->transaction_quantity)) {
-                // Si transaction_quantity est NULL, utiliser une valeur par défaut de 0
-                // pour éviter la violation de contrainte NOT NULL
+                // Si transaction_quantity est null, on met quantity_received à 0 pour respecter la contrainte NOT NULL
                 $item->quantity_received = 0;
             }
         });

@@ -5,158 +5,209 @@ declare(strict_types=1);
 namespace App\Observers;
 
 use App\Models\GoodsReceiptItem;
+use App\Models\GoodsReceipt;
+use App\Models\StockMovement;
 use App\Models\Product;
-use App\Models\PurchaseOrder;
-use App\Models\StockMovement; // Importer le modèle StockMovement
-use App\Models\GoodsReceipt;  // Importer GoodsReceipt pour related_document_type
-use App\Models\TenantUser; // Importer TenantUser pour la vérification de type
-use App\Models\UnitOfMeasure; // Importer UnitOfMeasure pour les conversions
+use App\Models\UnitOfMeasure;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class GoodsReceiptItemObserver
 {
     /**
-     * Handle the GoodsReceiptItem "created" event.
+     * Handle the GoodsReceiptItem "saved" event.
+     * Cette méthode est appelée après la création ou la mise à jour d'un item.
      */
-    public function created(GoodsReceiptItem $goodsReceiptItem): void
+    public function saved(GoodsReceiptItem $item): void
     {
-        if (!$goodsReceiptItem->goodsReceipt) {
-            Log::error('[GoodsReceiptItemObserver] GoodsReceipt relation is null for GoodsReceiptItem ID: ' . $goodsReceiptItem->id);
-            return; // Impossible de continuer sans le document parent
-        }
-        
-        $product = $goodsReceiptItem->product;
-        $newStockQuantity = $product->stock_quantity; // Stock actuel avant incrémentation
-
-        if ($product) {
-            // 1. Mettre à jour le stock du produit
-            $product->increment('stock_quantity', $goodsReceiptItem->quantity_received);
-            $newStockQuantity = $product->fresh()->stock_quantity; // Récupérer la nouvelle quantité après incrémentation
+        $goodsReceipt = $item->goodsReceipt;
+        if (!$goodsReceipt) {
+            Log::error('[GoodsReceiptItemObserver] GoodsReceipt introuvable pour l\'item ID: ' . $item->id);
+            return;
         }
 
-        // 2. Créer un mouvement de stock
-        $notes = 'Réception depuis commande fournisseur: ' . $goodsReceiptItem->goodsReceipt?->purchaseOrder?->order_number . ' / BL: ' . $goodsReceiptItem->goodsReceipt?->supplier_delivery_note_number;
-        
-        // Ajouter les informations d'unité de transaction si disponibles
-        if ($goodsReceiptItem->transaction_unit_id && $goodsReceiptItem->transaction_quantity) {
-            $transactionUnit = $goodsReceiptItem->transactionUnit;
-            $notes .= " - Reçu: {$goodsReceiptItem->transaction_quantity} {$transactionUnit?->symbol}";
-            
-            // Si l'unité de transaction est différente de l'unité de stock
-            if ($product && $product->stock_unit_id && $product->stock_unit_id != $goodsReceiptItem->transaction_unit_id) {
-                $notes .= " (converti en {$goodsReceiptItem->quantity_received} {$product->stockUnit?->symbol})"; 
-            }
-        }
-        
-        StockMovement::create([
-            'product_id' => $goodsReceiptItem->product_id,
-            'type' => 'purchase_receipt', // Type de mouvement clair
-            'quantity_changed' => $goodsReceiptItem->quantity_received, // Positive - toujours en unité de stock
-            'new_stock_quantity_after_movement' => $newStockQuantity,
-            'related_document_type' => GoodsReceipt::class, // Nom de la classe du modèle lié
-            'related_document_id' => $goodsReceiptItem->goods_receipt_id,
-            'user_id' => $goodsReceiptItem->goodsReceipt?->received_by_user_id, // Opérateur
-            'movement_date' => $goodsReceiptItem->goodsReceipt?->receipt_date ?? now(),
-            'notes' => $notes,
-        ]);
-
-
-        // 3. Mettre à jour le statut de la commande fournisseur (si liée)
-        if ($goodsReceiptItem->purchase_order_item_id && $goodsReceiptItem->goodsReceipt->purchase_order_id) {
-            $purchaseOrder = $goodsReceiptItem->goodsReceipt->purchaseOrder()->with('items')->first();
-            if ($purchaseOrder) {
-                $totalOrdered = 0;
-                $totalReceivedForOrder = 0;
-
-                foreach ($purchaseOrder->items as $poItem) {
-                    $totalOrdered += $poItem->quantity;
-                    // Somme de toutes les quantités reçues pour cette ligne de commande fournisseur spécifique
-                    $totalReceivedForPoItem = GoodsReceiptItem::where('purchase_order_item_id', $poItem->id)
-                                                                ->sum('quantity_received');
-                    $totalReceivedForOrder += $totalReceivedForPoItem;
-                }
-
-                if ($totalReceivedForOrder >= $totalOrdered) {
-                    $purchaseOrder->status = 'fully_received';
-                } elseif ($totalReceivedForOrder > 0) {
-                    $purchaseOrder->status = 'partially_received';
-                }
-                // Si $totalReceivedForOrder est 0 mais la commande était 'ordered', elle le reste.
-                // On ne gère pas le retour à 'ordered' si on annule une réception ici,
-                // cela nécessiterait une logique dans 'deleted' de GoodsReceiptItem.
-                $purchaseOrder->save();
-            }
+        // N'impacter le stock que si la réception est validée
+        if (in_array($goodsReceipt->status, ['validated', 'completed'])) {
+            $this->updateStockAndCreateMovement($item, $goodsReceipt);
         }
     }
 
     /**
-     * Handle the GoodsReceiptItem "deleted" event.
+     * Gère la suppression d'un item de réception.
      */
-    public function deleted(GoodsReceiptItem $goodsReceiptItem): void
+    public function deleted(GoodsReceiptItem $item): void
     {
-        if (!$goodsReceiptItem->goodsReceipt) {
-            Log::error('[GoodsReceiptItemObserver] GoodsReceipt relation is null for GoodsReceiptItem ID: ' . $goodsReceiptItem->id);
-            return; // Impossible de continuer sans le document parent
-        }
-        
-        $product = $goodsReceiptItem->product;
-        $newStockQuantity = $product->stock_quantity; // Stock actuel avant décrémentation
-
-        if ($product) {
-            // 1. Diminuer le stock du produit
-            $product->decrement('stock_quantity', $goodsReceiptItem->quantity_received);
-            $newStockQuantity = $product->fresh()->stock_quantity; // Récupérer la nouvelle quantité après décrémentation
+        $goodsReceipt = $item->goodsReceipt;
+        if (!$goodsReceipt) {
+            Log::error('[GoodsReceiptItemObserver] GoodsReceipt introuvable pour l\'item supprimé ID: ' . $item->id);
+            return;
         }
 
-        // 2. Créer un mouvement de stock d'annulation/correction
-        $reason = 'Annulation item de réception GRN: ' . $goodsReceiptItem->goodsReceipt->receipt_number;
+        // Si l'item est supprimé d'une réception validée, annuler l'impact sur le stock
+        if (in_array($goodsReceipt->status, ['validated', 'completed'])) {
+            $this->reverseStockMovement($item, $goodsReceipt);
+        }
+    }
+
+    /**
+     * Met à jour le stock et crée un mouvement de stock.
+     */
+    protected function updateStockAndCreateMovement(GoodsReceiptItem $item, GoodsReceipt $goodsReceipt): void
+    {
+        if (!$item->product_id || is_null($item->quantity_received) || $item->quantity_received == 0) {
+            Log::info('[GoodsReceiptItemObserver] Pas de mise à jour de stock nécessaire pour l\'item ' . $item->id);
+            return;
+        }
+
+        $product = Product::find($item->product_id);
+        if (!$product) {
+            Log::error('[GoodsReceiptItemObserver] Produit introuvable pour l\'item ' . $item->id);
+            return;
+        }
+
+        DB::transaction(function () use ($product, $item, $goodsReceipt) {
+            // Mise à jour du stock
+            $product->increment('stock_quantity', (float)$item->quantity_received);
+            $newStockQuantity = $product->fresh()->stock_quantity;
+
+            // Création du mouvement de stock
+            $notes = $this->buildMovementNotes($item, $goodsReceipt);
+
+            StockMovement::create([
+                'product_id' => $item->product_id,
+                'type' => 'purchase_receipt',
+                'quantity_changed' => (float)$item->quantity_received,
+                'new_stock_quantity_after_movement' => $newStockQuantity,
+                'related_document_type' => GoodsReceipt::class,
+                'related_document_id' => $goodsReceipt->id,
+                'user_id' => $goodsReceipt->received_by_user_id,
+                'movement_date' => $goodsReceipt->receipt_date ?? now(),
+                'transaction_unit_id' => $item->transaction_unit_id,
+                'notes' => $notes,
+            ]);
+
+            Log::info('[GoodsReceiptItemObserver] Stock mis à jour avec succès', [
+                'product_id' => $product->id,
+                'quantity_received' => $item->quantity_received,
+                'new_stock' => $newStockQuantity
+            ]);
+        });
+    }
+
+    /**
+     * Annule l'impact sur le stock d'un item supprimé.
+     */
+    protected function reverseStockMovement(GoodsReceiptItem $item, GoodsReceipt $goodsReceipt): void
+    {
+        if (!$item->product_id || is_null($item->quantity_received) || $item->quantity_received == 0) {
+            return;
+        }
+
+        $product = Product::find($item->product_id);
+        if (!$product) return;
+
+        DB::transaction(function () use ($product, $item, $goodsReceipt) {
+            // Annulation de la quantité reçue
+            $product->decrement('stock_quantity', (float)$item->quantity_received);
+            $newStockQuantity = $product->fresh()->stock_quantity;
+
+            // Création du mouvement d'annulation
+            $notes = "Annulation réception - BR: {$goodsReceipt->receipt_number}";
+            if ($item->transaction_unit_id) {
+                $notes .= " - Qté: {$item->transaction_quantity} {$item->transactionUnit?->symbol}";
+                if ($product->stock_unit_id != $item->transaction_unit_id) {
+                    $notes .= " (converti en {$item->quantity_received} {$product->stockUnit?->symbol})";
+                }
+            }
+
+            StockMovement::create([
+                'product_id' => $item->product_id,
+                'type' => 'purchase_receipt_cancellation',
+                'quantity_changed' => -(float)$item->quantity_received,
+                'new_stock_quantity_after_movement' => $newStockQuantity,
+                'related_document_type' => GoodsReceipt::class,
+                'related_document_id' => $goodsReceipt->id,
+                'user_id' => auth()->id() ?? $goodsReceipt->received_by_user_id,
+                'movement_date' => now(),
+                'transaction_unit_id' => $item->transaction_unit_id,
+                'notes' => $notes,
+            ]);
+        });
+    }
+
+    /**
+     * Construit les notes pour le mouvement de stock.
+     */
+    protected function buildMovementNotes(GoodsReceiptItem $item, GoodsReceipt $goodsReceipt): string
+    {
+        $notes = "Réception BR: {$goodsReceipt->receipt_number}";
         
-        // Ajouter les informations d'unité si disponibles
-        if ($goodsReceiptItem->transaction_unit_id && $goodsReceiptItem->transaction_quantity) {
-            $transactionUnit = $goodsReceiptItem->transactionUnit;
-            $reason .= " - Article: {$product->name}, Quantité: {$goodsReceiptItem->transaction_quantity} {$transactionUnit?->symbol}";
-            
-            // Si l'unité de transaction est différente de l'unité de stock
-            if ($product && $product->stock_unit_id && $product->stock_unit_id != $goodsReceiptItem->transaction_unit_id) {
-                $reason .= " (converti en {$goodsReceiptItem->quantity_received} {$product->stockUnit?->symbol})"; 
+        if ($goodsReceipt->purchaseOrder) {
+            $notes .= " - CF: {$goodsReceipt->purchaseOrder->order_number}";
+        }
+        
+        if ($goodsReceipt->supplier_delivery_note_number) {
+            $notes .= " - BL: {$goodsReceipt->supplier_delivery_note_number}";
+        }
+
+        if ($item->transaction_unit_id) {
+            $notes .= "\nQté reçue: {$item->transaction_quantity} {$item->transactionUnit?->symbol}";
+            if ($item->product->stock_unit_id != $item->transaction_unit_id) {
+                $notes .= " (converti en {$item->quantity_received} {$item->product->stockUnit?->symbol})";
             }
         }
-        
-        StockMovement::create([
-            'product_id' => $goodsReceiptItem->product_id,
-            'type' => 'purchase_receipt_cancellation', // Type de mouvement clair
-            'quantity_changed' => -$goodsReceiptItem->quantity_received, // Négative - toujours en unité de stock
-            'new_stock_quantity_after_movement' => $newStockQuantity,
-            'related_document_type' => GoodsReceipt::class,
-            'related_document_id' => $goodsReceiptItem->goods_receipt_id,
-            'user_id' => auth()->check() && auth()->user() instanceof TenantUser ? auth()->user()->getKey() : null, // L'utilisateur qui annule
-            'movement_date' => now(), // La date de l'annulation
-            'reason' => $reason,
-        ]);
 
-
-        // 3. Mettre à jour le statut de la commande fournisseur (logique existante)
-        if ($goodsReceiptItem->purchase_order_item_id && $goodsReceiptItem->goodsReceipt->purchase_order_id) {
-            // ... (votre logique de mise à jour du statut de PurchaseOrder reste ici) ...
-            $purchaseOrder = $goodsReceiptItem->goodsReceipt->purchaseOrder()->with('items')->first();
-            if ($purchaseOrder) {
-                $allLinesOrdered = $purchaseOrder->items->sum('quantity');
-                $totalCurrentlyReceivedForOrder = 0;
-                foreach ($purchaseOrder->items as $poItem) {
-                    $totalCurrentlyReceivedForOrder += GoodsReceiptItem::where('purchase_order_item_id', $poItem->id)->sum('quantity_received');
-                }
-
-                if ($totalCurrentlyReceivedForOrder <= 0) {
-                    if(in_array($purchaseOrder->status, ['partially_received', 'fully_received'])){
-                        $purchaseOrder->status = 'ordered';
-                    }
-                } elseif ($totalCurrentlyReceivedForOrder < $allLinesOrdered) {
-                    $purchaseOrder->status = 'partially_received';
-                } else {
-                    $purchaseOrder->status = 'fully_received';
-                }
-                $purchaseOrder->save();
-            }
+        return $notes;
+    }
+    
+    /**
+     * Méthode statique pour traiter un item de réception validée.
+     * Cette méthode est appelée par GoodsReceiptObserver.
+     */
+    public static function handleValidatedReceiptItem(GoodsReceiptItem $item, GoodsReceipt $goodsReceipt): void
+    {
+        if (!$item->product_id || $item->quantity_received <= 0) {
+            Log::info('[GoodsReceiptItemObserver] Item ignoré - données invalides', [
+                'item_id' => $item->id,
+                'product_id' => $item->product_id,
+                'quantity' => $item->quantity_received
+            ]);
+            return;
         }
+
+        $product = Product::find($item->product_id);
+        if (!$product) {
+            Log::error('[GoodsReceiptItemObserver] Produit introuvable pour l\'item ' . $item->id);
+            return;
+        }
+
+        DB::transaction(function () use ($product, $item, $goodsReceipt) {
+            // Mise à jour du stock
+            $product->increment('stock_quantity', (float)$item->quantity_received);
+            $newStockQuantity = $product->fresh()->stock_quantity;
+
+            // Création du mouvement de stock
+            $observer = new self();
+            $notes = $observer->buildMovementNotes($item, $goodsReceipt);
+
+            StockMovement::create([
+                'product_id' => $item->product_id,
+                'type' => 'purchase_receipt',
+                'quantity_changed' => (float)$item->quantity_received,
+                'new_stock_quantity_after_movement' => $newStockQuantity,
+                'related_document_type' => GoodsReceipt::class,
+                'related_document_id' => $goodsReceipt->id,
+                'user_id' => $goodsReceipt->received_by_user_id ?? auth()->id(),
+                'movement_date' => $goodsReceipt->receipt_date ?? now(),
+                'transaction_unit_id' => $item->transaction_unit_id,
+                'notes' => $notes,
+            ]);
+
+            Log::info('[GoodsReceiptItemObserver] Stock mis à jour avec succès', [
+                'product_id' => $product->id,
+                'quantity_received' => $item->quantity_received,
+                'new_stock' => $newStockQuantity
+            ]);
+        });
     }
 }
