@@ -26,6 +26,87 @@ class ItemsRelationManager extends RelationManager
 
     // protected static ?string $recordTitleAttribute = 'product_id'; // On va le rendre plus descriptif
 
+    /**
+     * Retourne le schéma de formulaire sous forme de tableau pour être utilisé dans d'autres contextes
+     * Cette méthode est appelée depuis SupplierCreditNoteResource
+     */
+    public static function getFormSchemaArray(): array
+    {
+        return [
+            Select::make('product_id')
+                ->label('Produit')
+                ->relationship('product', 'name')
+                ->searchable()
+                ->preload()
+                ->required()
+                ->reactive()
+                ->afterStateUpdated(function (Get $get, Set $set, ?string $state) {
+                    if ($state) {
+                        $product = Product::find($state);
+                        if ($product) {
+                            $set('description', $product->description);
+                            $set('unit_price', $product->purchase_price);
+                            $set('tax_rate', $product->tax_rate ?? 20);
+                        }
+                    }
+                }),
+
+            TextInput::make('description')
+                ->label('Description')
+                ->required()
+                ->maxLength(255),
+
+            TextInput::make('quantity')
+                ->label('Quantité')
+                ->numeric()
+                ->default(1)
+                ->minValue(0.01)
+                ->required()
+                ->reactive(),
+
+            TextInput::make('unit_price')
+                ->label('Prix unitaire')
+                ->numeric()
+                ->prefix('€')
+                ->required()
+                ->reactive(),
+
+            TextInput::make('discount_percentage')
+                ->label('Remise (%)')
+                ->numeric()
+                ->default(0)
+                ->minValue(0)
+                ->maxValue(100)
+                ->suffix('%')
+                ->reactive(),
+
+            TextInput::make('tax_rate')
+                ->label('TVA (%)')
+                ->numeric()
+                ->default(20)
+                ->minValue(0)
+                ->maxValue(100)
+                ->suffix('%')
+                ->reactive(),
+
+            Placeholder::make('line_total')
+                ->label('Total ligne')
+                ->content(function (Get $get): string {
+                    $quantity = (float) ($get('quantity') ?? 0);
+                    $unitPrice = (float) ($get('unit_price') ?? 0);
+                    $discountPercentage = (float) ($get('discount_percentage') ?? 0);
+                    $taxRate = (float) ($get('tax_rate') ?? 0);
+
+                    $subtotal = $quantity * $unitPrice;
+                    $discount = $subtotal * ($discountPercentage / 100);
+                    $afterDiscount = $subtotal - $discount;
+                    $tax = $afterDiscount * ($taxRate / 100);
+                    $total = $afterDiscount + $tax;
+
+                    return number_format($total, 2, ',', ' ') . ' €';
+                }),
+        ];
+    }
 
     public function form(Form $form): Form
     {
