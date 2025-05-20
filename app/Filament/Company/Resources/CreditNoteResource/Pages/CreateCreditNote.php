@@ -10,8 +10,17 @@ class CreateCreditNote extends CreateRecord
 {
     protected static string $resource = CreditNoteResource::class;
     
+    protected function afterCreate(): void
+    {
+        // Calculer les totaux après la création de l'avoir
+        if ($this->record) {
+            $this->record->calculateTotals();
+        }
+    }
+    
     protected function getRedirectUrl(): string
     {
-        return $this->getResource()::getUrl('index');
+        // Rediriger vers la page de visualisation de l'avoir plutôt que l'index
+        return $this->getResource()::getUrl('view', ['record' => $this->record]);
     }
 }

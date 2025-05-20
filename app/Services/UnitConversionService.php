@@ -11,6 +11,41 @@ use Illuminate\Support\Facades\Log;
 class UnitConversionService
 {
     /**
+     * Obtient le facteur de conversion entre deux unités
+     * 
+     * @param UnitOfMeasure $fromUnit L'unité source
+     * @param UnitOfMeasure $toUnit L'unité cible
+     * @param Product $product Le produit concerné (pour le contexte)
+     * @return float Le facteur de conversion
+     * @throws \Exception Si la conversion n'est pas possible
+     */
+    public function getConversionFactor(UnitOfMeasure $fromUnit, UnitOfMeasure $toUnit, Product $product): float
+    {
+        // Si les unités sont identiques
+        if ($fromUnit->id === $toUnit->id) {
+            return 1.0;
+        }
+        
+        // Si fromUnit est une unité de base et toUnit en dérive
+        if ($toUnit->base_unit_id === $fromUnit->id) {
+            return 1.0 / $toUnit->conversion_factor;
+        }
+        
+        // Si toUnit est une unité de base et fromUnit en dérive
+        if ($fromUnit->base_unit_id === $toUnit->id) {
+            return $fromUnit->conversion_factor;
+        }
+        
+        // Si les deux unités ont la même unité de base
+        if ($fromUnit->base_unit_id && $toUnit->base_unit_id && $fromUnit->base_unit_id === $toUnit->base_unit_id) {
+            return $fromUnit->conversion_factor / $toUnit->conversion_factor;
+        }
+        
+        // Sinon, la conversion n'est pas possible
+        throw new \Exception("Impossible de convertir entre {$fromUnit->name} et {$toUnit->name} pour le produit {$product->name}");
+    }
+    
+    /**
      * Convertit une quantité d'une unité à une autre
      * 
      * @param Product $product Le produit concerné (pour le contexte)

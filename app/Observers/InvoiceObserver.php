@@ -1,13 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Observers;
 
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
-// use App\Models\Product; // Commenté car plus utilisé
-// use App\Models\StockMovement; // Commenté car plus utilisé
-// use App\Models\TenantUser; // Commenté car plus utilisé
+use App\Observers\InvoiceItemObserver as ItemObserver; // Pour appeler la méthode statique
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class InvoiceObserver
 {
@@ -32,9 +32,26 @@ class InvoiceObserver
      */
     public function updated(Invoice $invoice): void
     {
-        // $this->processStockForInvoice($invoice, 'update'); // On ne gère plus le stock ici
-        Log::info("[InvoiceObserver] UPDATED event for Invoice ID: {$invoice->id}, Status: {$invoice->status}");
-        // Vous pourriez garder une logique ici si le statut de la facture doit déclencher autre chose
+        // Si le statut a changé OU si des items ont été modifiés (ce qui aurait pu changer stock_unit_quantity)
+        // et que le nouveau statut est un statut qui impacte le stock
+        if ($invoice->wasChanged('status')) {
+            $stockImpactingStatuses = ['issued', 'sent', 'partially_paid', 'paid', 'cancelled'];
+
+            if (in_array($invoice->status, $stockImpactingStatuses) || 
+                ($invoice->status === 'cancelled' && in_array($invoice->getOriginal('status'), $stockImpactingStatuses))) {
+                
+                Log::info("[InvoiceObserver] Invoice ID: {$invoice->id} status changed to '{$invoice->status}' (from '{$invoice->getOriginal('status')}'). Processing items for stock update.");
+
+                DB::transaction(function () use ($invoice) {
+                    foreach ($invoice->items()->get() as $item) {
+                        // On passe l'item et la facture (qui contient le nouveau et l'ancien statut)
+                        ItemObserver::handleInvoiceStatusChange($item, $invoice);
+                    }
+                });
+                
+                Log::info("[InvoiceObserver] Finished processing items for Invoice ID: {$invoice->id}.");
+            }
+        }
     }
 
     /**
@@ -151,23 +168,22 @@ class InvoiceObserver
      */
     public function deleting(Invoice $invoice): void
     {
-        Log::info("[InvoiceObserver] DELETING event for Invoice ID: {$invoice->id}, Status: {$invoice->status}");
-        // Si la facture était liée à des livraisons qui ont sorti du stock,
-        // la suppression de la facture ne devrait pas automatiquement réintégrer le stock.
-        // La réintégration devrait se faire via l'annulation/suppression du Bon de Livraison.
-        // Donc, on supprime aussi la logique de stock ici.
-        
-        // Ancien code commenté:
-        /*
-        $stockDeductingStatuses = ['sent', 'paid', 'overdue', 'confirmed'];
-        if (in_array($invoice->status, $stockDeductingStatuses)) {
-            Log::info("[InvoiceObserver] Re-incrementing stock due to invoice deletion.");
-            foreach ($invoice->items()->with('product')->get() as $item) {
-                if ($item->product) {
-                     $this->reIncrementStockAndCreateMovement($item, $invoice);
+        if (in_array($invoice->status, ['issued', 'sent', 'partially_paid', 'paid'])) {
+            Log::warning("[InvoiceObserver] Facture {$invoice->invoice_number} (statut: {$invoice->status}) en cours de suppression. Annulation des mouvements de stock pour ses items.");
+            
+            DB::transaction(function () use ($invoice) {
+                foreach ($invoice->items()->get() as $item) {
+                    // Simuler un passage à 'cancelled' pour chaque item
+                    $tempInvoice = clone $invoice; // Cloner pour ne pas modifier l'original pendant la boucle
+                    $tempInvoice->status = 'cancelled'; // Le statut cible est une annulation
+                    // Mettre l'ancien statut qui avait impacté le stock
+                    $tempInvoice->setRawOriginal('status', $invoice->status); 
+
+                    ItemObserver::handleInvoiceStatusChange($item, $tempInvoice);
                 }
-            }
+            });
+            
+            Log::info("[InvoiceObserver] Annulation des mouvements de stock terminée pour la facture ID: {$invoice->id}.");
         }
-        */
     }
 }

@@ -34,6 +34,7 @@ use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\Filter;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 
 class CreditNoteResource extends Resource
 {
@@ -102,192 +103,273 @@ class CreditNoteResource extends Resource
                             if ($clientId) {
                                 return Invoice::where('client_id', $clientId)
                                     ->whereNotIn('status', ['draft', 'voided', 'cancelled'])
-                                    ->orderBy('invoice_date', 'desc')
-                                    ->limit(50)
                                     ->pluck('invoice_number', 'id')
-                                    ->all();
+                                    ->toArray();
                             }
                             return [];
                         })
-                        ->searchable()
                         ->reactive()
-                        ->afterStateUpdated(function (Set $set, $state) {
-                            if (empty($state)) {
-                                $set('invoice_items', []);
+                        ->afterStateUpdated(function ($state, Set $set) {
+                            if ($state) {
+                                // Récupérer les items de la facture pour pré-remplir
+                                $invoice = Invoice::with('items.product')->find($state);
+                                if ($invoice) {
+                                    $items = $invoice->items->map(function ($item) {
+                                        return [
+                                            'product_id' => $item->product_id,
+                                            'description' => $item->description,
+                                            'quantity' => $item->quantity,
+                                            'unit_price' => $item->unit_price,
+                                            'discount_percentage' => $item->discount_percentage,
+                                            'tax_rate' => $item->tax_rate,
+                                            'line_total' => $item->line_total,
+                                            'transaction_unit_id' => $item->transaction_unit_id,
+                                        ];
+                                    })->toArray();
+                                    $set('items', $items);
+                                }
                             }
                         }),
                     
                     Toggle::make('restock_items')
-                        ->label('Remettre les articles en stock')
-                        ->helperText('Activer si les articles doivent être retournés en stock')
-                        ->default(false),
+                        ->label('Retourner les articles en stock')
+                        ->default(true)
+                        ->helperText('Cochez pour augmenter le stock des produits retournés'),
                 ]),
                 
-                Textarea::make('internal_notes')
-                    ->label('Notes internes')
-                    ->rows(2),
+                Textarea::make('notes')
+                    ->label('Notes')
+                    ->rows(3),
                 
-                Section::make('Articles de l\'avoir')
+                Section::make('Détails de l\'avoir')
                     ->schema([
                         Repeater::make('items')
-                            ->relationship()
+                            ->label('')
                             ->schema([
-                                Grid::make(6)->schema([
-                                    Select::make('product_id')
-                                        ->label('Produit')
-                                        ->options(Product::all()->pluck('name', 'id'))
-                                        ->searchable()
-                                        ->reactive()
-                                        ->afterStateUpdated(function (Set $set, $state) {
-                                            if ($state) {
-                                                $product = Product::find($state);
-                                                if ($product) {
-                                                    $set('product_name', $product->name);
-                                                    $set('product_sku', $product->sku);
-                                                    $set('unit_price', $product->selling_price);
-                                                    $set('tax_rate', $product->tax_rate);
+                                Grid::make(3)
+                                    ->schema([
+                                        Select::make('product_id')
+                                            ->label('Produit')
+                                            ->options(function (): array {
+                                                return Product::where('is_active', true)
+                                                    ->orderBy('name')
+                                                    ->pluck('name', 'id')
+                                                    ->toArray();
+                                            })
+                                            ->searchable()
+                                            ->reactive()
+                                            ->afterStateUpdated(function ($state, Set $set) {
+                                                if ($state) {
+                                                    $product = Product::find($state);
+                                                    $set('unit_price', $product ? $product->selling_price : 0);
+                                                    $set('description', $product ? $product->description : '');
                                                     
-                                                    // Définir l'unité de vente par défaut du produit
-                                                    if ($product->sales_unit_id) {
+                                                    // Définir l'unité de transaction par défaut (unité de vente du produit)
+                                                    if ($product && $product->sales_unit_id) {
                                                         $set('transaction_unit_id', $product->sales_unit_id);
                                                     }
                                                 }
-                                            } else {
-                                                $set('transaction_unit_id', null);
-                                            }
-                                        })
-                                        ->columnSpan(3),
-                                    
-                                    TextInput::make('product_name')
-                                        ->label('Nom du produit')
-                                        ->required()
-                                        ->columnSpan(3),
-                                ]),
-                                
-                                Grid::make(6)->schema([
-                                    TextInput::make('product_sku')
-                                        ->label('Référence')
-                                        ->columnSpan(1),
-                                    
-                                    TextInput::make('quantity')
-                                        ->label('Quantité')
-                                        ->numeric()
-                                        ->default(1)
-                                        ->minValue(0.01)
-                                        ->step(0.01)
-                                        ->required()
-                                        ->reactive()
-                                        ->afterStateUpdated(fn (Set $set, Get $get) => 
-                                            $set('line_total', self::calculateLineTotal(
-                                                $get('quantity'), 
-                                                $get('unit_price'), 
-                                                $get('discount_percentage'), 
-                                                $get('tax_rate')
-                                            )))
-                                        ->columnSpan(1),
-                                    
-                                    TextInput::make('unit_price')
-                                        ->label('Prix unitaire')
-                                        ->numeric()
-                                        ->prefix(config('app.currency_symbol', '€'))
-                                        ->required()
-                                        ->reactive()
-                                        ->afterStateUpdated(fn (Set $set, Get $get) => 
-                                            $set('line_total', self::calculateLineTotal(
-                                                $get('quantity'), 
-                                                $get('unit_price'), 
-                                                $get('discount_percentage'), 
-                                                $get('tax_rate')
-                                            )))
-                                        ->columnSpan(1),
-                                    
-                                    TextInput::make('discount_percentage')
-                                        ->label('Remise %')
-                                        ->numeric()
-                                        ->default(0)
-                                        ->minValue(0)
-                                        ->maxValue(100)
-                                        ->suffix('%')
-                                        ->reactive()
-                                        ->afterStateUpdated(fn (Set $set, Get $get) => 
-                                            $set('line_total', self::calculateLineTotal(
-                                                $get('quantity'), 
-                                                $get('unit_price'), 
-                                                $get('discount_percentage'), 
-                                                $get('tax_rate')
-                                            )))
-                                        ->columnSpan(1),
-                                    
-                                    TextInput::make('tax_rate')
-                                        ->label('TVA %')
-                                        ->numeric()
-                                        ->default(20)
-                                        ->required()
-                                        ->minValue(0)
-                                        ->suffix('%')
-                                        ->reactive()
-                                        ->afterStateUpdated(fn (Set $set, Get $get) => 
-                                            $set('line_total', self::calculateLineTotal(
-                                                $get('quantity'), 
-                                                $get('unit_price'), 
-                                                $get('discount_percentage'), 
-                                                $get('tax_rate') ?? 0
-                                            )))
-                                        ->columnSpan(1),
-                                    
-                                    TextInput::make('line_total')
-                                        ->label('Total')
-                                        ->numeric()
-                                        ->prefix(config('app.currency_symbol', '€'))
-                                        ->disabled()
-                                        ->dehydrated()
-                                        ->columnSpan(1),
-                                ]),
+                                            })
+                                            ->required()
+                                            ->columnSpan(2),
+                                            
+                                        Select::make('transaction_unit_id')
+                                            ->label('Unité')
+                                            ->options(function (Get $get): array {
+                                                $productId = $get('product_id');
+                                                if (!$productId) {
+                                                    return [];
+                                                }
+                                                
+                                                // Récupérer toutes les unités compatibles avec ce produit
+                                                $product = Product::find($productId);
+                                                if (!$product) {
+                                                    return [];
+                                                }
+                                                
+                                                // Unités compatibles : unité de stock, unité de vente et leurs dérivées
+                                                $unitIds = [];
+                                                
+                                                // Ajouter l'unité de vente si définie
+                                                if ($product->sales_unit_id) {
+                                                    $unitIds[] = $product->sales_unit_id;
+                                                    // Ajouter les unités dérivées
+                                                    $derivedUnits = UnitOfMeasure::where('base_unit_id', $product->sales_unit_id)
+                                                        ->pluck('id')->toArray();
+                                                    $unitIds = array_merge($unitIds, $derivedUnits);
+                                                }
+                                                
+                                                // Ajouter l'unité de stock si différente
+                                                if ($product->stock_unit_id && !in_array($product->stock_unit_id, $unitIds)) {
+                                                    $unitIds[] = $product->stock_unit_id;
+                                                    // Ajouter les unités dérivées
+                                                    $derivedUnits = UnitOfMeasure::where('base_unit_id', $product->stock_unit_id)
+                                                        ->pluck('id')->toArray();
+                                                    $unitIds = array_merge($unitIds, $derivedUnits);
+                                                }
+                                                
+                                                // Récupérer les unités puis transformer avec l'accesseur
+                                                $units = UnitOfMeasure::whereIn('id', $unitIds)->get();
+                                                return $units->pluck('name_with_symbol', 'id')->toArray();
+                                            })
+                                            ->reactive()
+                                            ->required()
+                                            ->columnSpan(1),
+                                    ]),
                                 
                                 Textarea::make('description')
                                     ->label('Description')
-                                    ->rows(2),
+                                    ->rows(2)
+                                    ->columnSpanFull(),
+                                
+                                Grid::make(4)
+                                    ->schema([
+                                        TextInput::make('quantity')
+                                            ->label('Quantité')
+                                            ->numeric()
+                                            ->default(1)
+                                            ->minValue(0.01)
+                                            ->step(0.01)
+                                            ->required()
+                                            ->reactive()
+                                            ->afterStateUpdated(fn (Set $set, Get $get) => 
+                                                $set('line_total', self::calculateLineTotal(
+                                                    (float)($get('quantity') ?? 0), 
+                                                    (float)($get('unit_price') ?? 0), 
+                                                    (float)($get('discount_percentage') ?? 0), 
+                                                    (float)($get('tax_rate') ?? 0)
+                                                )))
+                                            ->columnSpan(1),
+                                        
+                                        TextInput::make('unit_price')
+                                            ->label('Prix unitaire')
+                                            ->numeric()
+                                            ->required()
+                                            ->minValue(0)
+                                            ->step(0.01)
+                                            ->prefix(config('app.currency_symbol', '€'))
+                                            ->reactive()
+                                            ->afterStateUpdated(fn (Set $set, Get $get) => 
+                                                $set('line_total', self::calculateLineTotal(
+                                                    (float)($get('quantity') ?? 0), 
+                                                    (float)($get('unit_price') ?? 0), 
+                                                    (float)($get('discount_percentage') ?? 0), 
+                                                    (float)($get('tax_rate') ?? 0)
+                                                )))
+                                            ->columnSpan(1),
+                                        
+                                        TextInput::make('discount_percentage')
+                                            ->label('Remise %')
+                                            ->numeric()
+                                            ->default(0)
+                                            ->required()
+                                            ->minValue(0)
+                                            ->maxValue(100)
+                                            ->suffix('%')
+                                            ->reactive()
+                                            ->afterStateUpdated(fn (Set $set, Get $get) => 
+                                                $set('line_total', self::calculateLineTotal(
+                                                    (float)($get('quantity') ?? 0), 
+                                                    (float)($get('unit_price') ?? 0), 
+                                                    (float)($get('discount_percentage') ?? 0), 
+                                                    (float)($get('tax_rate') ?? 0)
+                                                )))
+                                            ->columnSpan(1),
+                                        
+                                        TextInput::make('tax_rate')
+                                            ->label('TVA %')
+                                            ->numeric()
+                                            ->default(20)
+                                            ->required()
+                                            ->minValue(0)
+                                            ->suffix('%')
+                                            ->reactive()
+                                            ->afterStateUpdated(fn (Set $set, Get $get) => 
+                                                $set('line_total', self::calculateLineTotal(
+                                                    (float)($get('quantity') ?? 0), 
+                                                    (float)($get('unit_price') ?? 0), 
+                                                    (float)($get('discount_percentage') ?? 0), 
+                                                    (float)($get('tax_rate') ?? 0)
+                                                )))
+                                            ->columnSpan(1),
+                                    ]),
+                                
+                                TextInput::make('line_total')
+                                    ->label('Total TTC')
+                                    ->numeric()
+                                    ->prefix(config('app.currency_symbol', '€'))
+                                    ->disabled()
+                                    ->dehydrated(),
+                                    
+                                Hidden::make('stock_unit_quantity')
+                                    ->dehydrated(),
                             ])
                             ->columns(1)
-                            ->itemLabel(fn (array $state): ?string => 
-                                $state['product_name'] ?? null
-                            )
-                            ->defaultItems(0)
-                            ->reorderable(false)
+                            ->defaultItems(1)
                             ->addActionLabel('Ajouter un article')
-                            ->required(),
+                            ->reorderable(false)
+                            ->cloneable(false)
+                            ->collapsible()
+                            ->itemLabel(fn (array $state): ?string => 
+                                $state['product_id'] 
+                                    ? Product::find($state['product_id'])?->name . ' - ' . 
+                                      number_format((float)($state['quantity'] ?? 0), 2) . ' x ' . 
+                                      number_format((float)($state['unit_price'] ?? 0), 2) . '€'
+                                    : null
+                            ),
                     ]),
                 
-                Section::make('Récapitulatif')
+                Section::make('Totaux')
                     ->schema([
-                        Grid::make(3)->schema([
-                            Placeholder::make('subtotal_placeholder')
-                                ->label('Sous-total HT')
-                                ->content(function (Get $get, Set $set, ?CreditNote $record): string {
-                                    if ($record) {
-                                        return number_format($record->subtotal, 2) . ' ' . config('app.currency_symbol', '€');
-                                    }
-                                    return '0.00 ' . config('app.currency_symbol', '€');
-                                }),
-                            
-                            Placeholder::make('taxes_amount_placeholder')
-                                ->label('Total TVA')
-                                ->content(function (?CreditNote $record): string {
-                                    if ($record) {
-                                        return number_format($record->taxes_amount, 2) . ' ' . config('app.currency_symbol', '€');
-                                    }
-                                    return '0.00 ' . config('app.currency_symbol', '€');
-                                }),
-                            
-                            Placeholder::make('total_amount_placeholder')
-                                ->label('Total TTC')
-                                ->content(function (?CreditNote $record): string {
-                                    if ($record) {
-                                        return number_format($record->total_amount, 2) . ' ' . config('app.currency_symbol', '€');
-                                    }
-                                    return '0.00 ' . config('app.currency_symbol', '€');
-                                }),
-                        ]),
+                        Grid::make(2)
+                            ->schema([
+                                Placeholder::make('subtotal_placeholder')
+                                    ->label('Total HT')
+                                    ->content(fn (Get $get): string => 
+                                        number_format(
+                                            collect($get('items') ?? [])->sum(function ($item) {
+                                                $quantity = (float)($item['quantity'] ?? 0);
+                                                $unitPrice = (float)($item['unit_price'] ?? 0);
+                                                $discountPercentage = (float)($item['discount_percentage'] ?? 0);
+                                                
+                                                $basePrice = $quantity * $unitPrice;
+                                                $discountAmount = $basePrice * ($discountPercentage / 100);
+                                                return $basePrice - $discountAmount;
+                                            }),
+                                            2
+                                        ) . ' ' . config('app.currency_symbol', '€')
+                                    ),
+                                
+                                Placeholder::make('tax_placeholder')
+                                    ->label('Total TVA')
+                                    ->content(fn (Get $get): string => 
+                                        number_format(
+                                            collect($get('items') ?? [])->sum(function ($item) {
+                                                $quantity = (float)($item['quantity'] ?? 0);
+                                                $unitPrice = (float)($item['unit_price'] ?? 0);
+                                                $discountPercentage = (float)($item['discount_percentage'] ?? 0);
+                                                $taxRate = (float)($item['tax_rate'] ?? 0);
+                                                
+                                                $basePrice = $quantity * $unitPrice;
+                                                $discountAmount = $basePrice * ($discountPercentage / 100);
+                                                $priceAfterDiscount = $basePrice - $discountAmount;
+                                                return $priceAfterDiscount * ($taxRate / 100);
+                                            }),
+                                            2
+                                        ) . ' ' . config('app.currency_symbol', '€')
+                                    ),
+                                
+                                Placeholder::make('total_placeholder')
+                                    ->label('Total TTC')
+                                    ->content(fn (Get $get): string => 
+                                        number_format(
+                                            collect($get('items') ?? [])->sum(function ($item) {
+                                                return (float)($item['line_total'] ?? 0);
+                                            }),
+                                            2
+                                        ) . ' ' . config('app.currency_symbol', '€')
+                                    ),
+                            ]),
                     ])
                     ->visibleOn(['edit', 'view']),
             ])->columns(1);
@@ -318,53 +400,43 @@ class CreditNoteResource extends Resource
                     ->searchable()
                     ->sortable(),
                 
-                TextColumn::make('client_id')
+                TextColumn::make('client.company_name')
                     ->label('Client')
-                    ->formatStateUsing(fn ($state, CreditNote $record) => 
-                        $record->client ? $record->client->getDisplayNameAttribute() : '-'
-                    )
-                    ->searchable(query: function (Builder $query, string $search): Builder {
-                        return $query->whereHas('client', function (Builder $query) use ($search) {
-                            $query->where('company_name', 'like', "%{$search}%")
-                                  ->orWhere('first_name', 'like', "%{$search}%")
-                                  ->orWhere('last_name', 'like', "%{$search}%");
-                        });
-                    })
+                    ->searchable()
+                    ->sortable(),
+                
+                TextColumn::make('credit_note_date')
+                    ->label('Date d\'avoir')
+                    ->date()
                     ->sortable(),
                 
                 TextColumn::make('invoice.invoice_number')
                     ->label('Facture d\'origine')
                     ->searchable()
-                    ->sortable()
-                    ->placeholder('N/A'),
-                
-                TextColumn::make('credit_note_date')
-                    ->label('Date')
-                    ->date()
                     ->sortable(),
                 
                 TextColumn::make('reason')
                     ->label('Motif')
                     ->formatStateUsing(fn (string $state): string => 
-                        self::$reasonTypes[$state] ?? ucfirst($state)
+                        self::$reasonTypes[$state] ?? $state
                     )
                     ->sortable(),
                 
                 TextColumn::make('total_amount')
-                    ->label('Montant')
+                    ->label('Montant TTC')
                     ->money(config('app.currency', 'eur'))
                     ->sortable(),
                 
                 TextColumn::make('status')
                     ->label('Statut')
                     ->formatStateUsing(fn (string $state): string => 
-                        self::$statuses[$state] ?? ucfirst($state)
+                        self::$statuses[$state] ?? $state
                     )
                     ->badge()
                     ->color(fn (string $state): string => 
                         match ($state) {
                             'draft' => 'gray',
-                            'issued' => 'primary',
+                            'issued' => 'info',
                             'applied' => 'success',
                             'voided' => 'danger',
                             default => 'gray',
@@ -410,7 +482,7 @@ class CreditNoteResource extends Resource
             ->actions([
                 Tables\Actions\ViewAction::make(),
                 Tables\Actions\EditAction::make()
-                    ->visible(fn (CreditNote $record): bool => $record->status === 'draft'),
+                    ->visible(fn (CreditNote $record): bool => in_array($record->status, ['draft', 'issued'])),
                 Tables\Actions\Action::make('issue')
                     ->label('Émettre')
                     ->icon('heroicon-o-paper-airplane')

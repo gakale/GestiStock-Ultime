@@ -9,166 +9,192 @@ use App\Models\Product;
 use App\Models\StockMovement;
 use App\Models\CreditNote;
 use App\Models\TenantUser;
-use App\Models\UnitOfMeasure;
-use App\Services\UnitConversionService;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
 
 class CreditNoteItemObserver
 {
-    /**
-     * Calcule la quantité à ajouter au stock en fonction de l'unité de transaction
-     */
-    protected function getStockQuantityChange(CreditNoteItem $cnItem): float
-    {
-        $product = $cnItem->product;
-        $transactionUnit = UnitOfMeasure::find($cnItem->transaction_unit_id);
-
-        if (!$product || !$transactionUnit || !$product->stockUnit || is_null($cnItem->quantity)) {
-            Log::warning("Données manquantes pour la conversion de stock sur CreditNoteItem ID: {$cnItem->id}");
-            return (float)$cnItem->quantity; // Utiliser la quantité telle quelle si pas de conversion possible
-        }
-
-        try {
-            $conversionService = App::make(UnitConversionService::class);
-            return $conversionService->convert(
-                $product,
-                (float)$cnItem->quantity, // Quantité dans l'unité de transaction
-                $transactionUnit,              // Unité de transaction
-                $product->stockUnit            // Unité de stock du produit (cible)
-            );
-        } catch (\Exception $e) {
-            Log::error("Erreur de conversion pour CreditNoteItem {$cnItem->id}: " . $e->getMessage());
-            return (float)$cnItem->quantity; // Utiliser la quantité telle quelle en cas d'erreur
-        }
-    }
-    
     public function created(CreditNoteItem $cnItem): void
     {
-        $this->processStockForItem($cnItem, 'create');
+        $this->processStockUpdate($cnItem, 'create');
+        
+        if ($cnItem->creditNote) {
+            $cnItem->creditNote->calculateTotals();
+        }
     }
 
     public function updated(CreditNoteItem $cnItem): void
     {
-        // Gérer si la quantité change sur un avoir déjà émis
-        if ($cnItem->isDirty('quantity')) {
-            // Annuler l'ancien mouvement de stock (plus complexe, nécessite de stocker l'ancien état)
-            // Pour l'instant, on suppose que les items ne sont pas modifiés une fois l'avoir émis,
-            // ou qu'on annule l'avoir et on en crée un nouveau.
-            // Une solution simple est de ne traiter le stock que si l'avoir est dans un statut "final".
-            Log::info("[CreditNoteItemObserver] UPDATED event for CreditNoteItem ID: {$cnItem->id}. Stock logic might need review for updates.");
-             $this->processStockForItem($cnItem, 'update'); // Attention, peut causer des doubles mouvements si non géré finement
+        $this->processStockUpdate($cnItem, 'update');
+
+        if ($cnItem->creditNote) {
+            $cnItem->creditNote->calculateTotals();
         }
     }
 
     public function deleted(CreditNoteItem $cnItem): void
     {
-        // Si un item est supprimé d'un avoir qui avait réintégré le stock, il faut annuler cette réintégration
-         $this->processStockForItem($cnItem, 'delete'); // La logique doit être inversée
+        $this->processStockUpdate($cnItem, 'delete');
+        
+        if ($cnItem->creditNote) {
+            $cnItem->creditNote->calculateTotals();
+        }
     }
 
-    protected function processStockForItem(CreditNoteItem $cnItem, string $eventContext): void
+    /**
+     * Traite la mise à jour du stock pour un CreditNoteItem.
+     * Gère la création, la mise à jour (avec ajustement différentiel) et la suppression.
+     */
+    protected function processStockUpdate(CreditNoteItem $cnItem, string $eventContext): void
     {
-        $creditNote = $cnItem->creditNote;
+        $creditNote = CreditNote::find($cnItem->credit_note_id); // Recharger pour s'assurer qu'on a le dernier état
+
         if (!$creditNote) {
-            Log::error("[CreditNoteItemObserver] CreditNote relation is null for CreditNoteItem ID: {$cnItem->id}");
+            Log::error("[CreditNoteItemObserver] CreditNote introuvable pour CreditNoteItem ID: {$cnItem->id}. CN ID: {$cnItem->credit_note_id}");
             return;
         }
 
-        // Statuts de l'avoir qui déclenchent l'impact sur le stock
-        $stockImpactingStatuses = ['issued', 'applied']; // 'issued' = émis et finalisé
+        $stockImpactingStatuses = ['issued', 'applied']; // Statuts qui impactent le stock normalement
+        
+        // Contextes qui forcent le traitement du stock même si le statut actuel de la CN n'est pas 'stockImpacting'
+        // Cela est utile quand CreditNoteObserver dicte une action basée sur un changement de statut (ex: issued -> voided)
+        $forceStockProcessingContexts = [
+            'delete_due_to_cn_status_change', // Pour annuler un impact stock quand CN passe de 'issued' à 'voided', etc.
+            'create_due_to_cn_status_change'  // Pour appliquer un impact stock quand CN passe de 'draft' à 'issued'
+        ];
 
-        if (!in_array($creditNote->status, $stockImpactingStatuses)) {
-            Log::info("[CreditNoteItemObserver] Stock not processed for item ID {$cnItem->id}. CreditNote status is '{$creditNote->status}'. Event: {$eventContext}");
+        if (!in_array($creditNote->status, $stockImpactingStatuses) && !in_array($eventContext, $forceStockProcessingContexts)) {
+            Log::info("[CreditNoteItemObserver] Le statut de l'avoir ({$creditNote->status}) ou le contexte ({$eventContext}) n'entraîne pas d'impact sur le stock pour l'item ID: {$cnItem->id}.");
             return;
         }
         
-        // Vérifier le toggle global de l'avoir pour le retour en stock
-        if (!$creditNote->restock_items) {
-            Log::info("[CreditNoteItemObserver] CreditNote ID {$creditNote->id} is not marked for restock. Skipping stock processing for item ID {$cnItem->id}.");
-            return;
+        // Si le contexte est forcé mais que la note de crédit n'est pas marquée pour restock_items (pour le cas create_due_to_cn_status_change)
+        if ($eventContext === 'create_due_to_cn_status_change' && !$creditNote->restock_items) {
+             Log::info("[CreditNoteItemObserver] CN #{$creditNote->credit_note_number} non marquée pour restock. Pas d'impact stock pour item ID: {$cnItem->id} via contexte {$eventContext}.");
+             return;
         }
 
-        if (!$cnItem->product_id) {
-            Log::info("[CreditNoteItemObserver] No product for item ID {$cnItem->id}. Event: {$eventContext}");
-            return; // Pas de produit
-        }
-
-        $product = $cnItem->product;
+        $product = Product::find($cnItem->product_id); // Recharger le produit
         if (!$product) {
-            Log::error("[CreditNoteItemObserver] Product not found for item ID {$cnItem->id}. Event: {$eventContext}");
+            Log::error("[CreditNoteItemObserver] Produit introuvable (ID: {$cnItem->product_id}) pour CreditNoteItem ID: {$cnItem->id}. Contexte: {$eventContext}");
             return;
         }
 
-        if ($eventContext === 'create' || $eventContext === 'update') { // Pour update, il faudrait gérer la différence. Simplifions pour l'instant.
-            // Convertir la quantité de l'unité de transaction vers l'unité de stock
-            $quantityInStockUnit = $this->getStockQuantityChange($cnItem);
-            
-            Log::info("[CreditNoteItemObserver] Re-incrementing stock for Product ID: {$product->id}, Qty: {$quantityInStockUnit}. Event: {$eventContext}");
-            $product->increment('stock_quantity', $quantityInStockUnit);
-            $newStockQuantity = $product->fresh()->stock_quantity;
-            
-            // Préparer les notes avec informations sur l'unité
-            $notes = "Retour client - Avoir: {$creditNote->credit_note_number} - Article: {$product->name}";
-            
-            // Ajouter les informations d'unité de transaction si disponibles
-            if ($cnItem->transaction_unit_id && $cnItem->quantity) {
-                $transactionUnit = $cnItem->transactionUnit;
-                $notes .= " ({$cnItem->quantity} {$transactionUnit?->symbol})";
-                
-                // Si l'unité de transaction est différente de l'unité de stock
-                if ($product->stock_unit_id && $product->stock_unit_id != $cnItem->transaction_unit_id) {
-                    $notes .= " (converti en {$quantityInStockUnit} {$product->stockUnit?->symbol})"; 
+        // La quantité d'impact sur le stock est maintenant directement stock_unit_quantity
+        // Il faut s'assurer qu'elle est calculée et disponible.
+        $currentStockUnitQuantity = (float) $cnItem->stock_unit_quantity;
+
+        if (is_null($cnItem->stock_unit_quantity)) {
+             Log::warning("[CreditNoteItemObserver] stock_unit_quantity est null pour CreditNoteItem ID: {$cnItem->id}. Impossible de mettre à jour le stock. Contexte: {$eventContext}");
+             return;
+        }
+
+        $quantityChangeForStock = 0;
+        $stockMovementType = '';
+        $notes = '';
+
+        if ($eventContext === 'create' || $eventContext === 'create_due_to_cn_status_change') {
+            // Ne traiter que si restock_items est vrai pour create_due_to_cn_status_change
+            // Cette vérification est maintenant faite plus haut pour ce contexte spécifique.
+            $quantityChangeForStock = $currentStockUnitQuantity;
+            $stockMovementType = 'inventory_adjustment'; // Utiliser inventory_adjustment au lieu de customer_return
+            $notes = "Retour client via Avoir #{$creditNote->credit_note_number} - Article: {$product->name} ({$cnItem->quantity} {$cnItem->transactionUnit?->symbol} => {$currentStockUnitQuantity} {$product->stockUnit?->symbol})";
+            Log::info("[CreditNoteItemObserver] CONTEXT ({$eventContext}): Augmentation stock pour Produit ID {$product->id} de {$quantityChangeForStock}. Item ID: {$cnItem->id}");
+        
+        } elseif ($eventContext === 'update') {
+            // Gérer la mise à jour est complexe car il faut l'ancienne et la nouvelle valeur.
+            // On récupère la quantité originale de stock_unit_quantity.
+            $originalStockUnitQuantity = (float) $cnItem->getOriginal('stock_unit_quantity');
+
+            // Si le produit a changé, c'est plus complexe : annuler l'ancien, ajouter le nouveau.
+            if ($cnItem->isDirty('product_id')) {
+                $originalProduct = Product::find($cnItem->getOriginal('product_id'));
+                if ($originalProduct) {
+                    // Annuler l'impact sur l'ancien produit
+                    $this->adjustProductStock($originalProduct, -$originalStockUnitQuantity, $creditNote, $cnItem, 'update_product_changed_old');
                 }
+                // Ajouter l'impact sur le nouveau produit
+                $quantityChangeForStock = $currentStockUnitQuantity;
+                $stockMovementType = 'inventory_adjustment'; // Utiliser inventory_adjustment au lieu de customer_return
+                $notes = "Retour client (produit changé) Avoir #{$creditNote->credit_note_number} - Article: {$product->name} ({$cnItem->quantity} {$cnItem->transactionUnit?->symbol} => {$currentStockUnitQuantity} {$product->stockUnit?->symbol})";
+                Log::info("[CreditNoteItemObserver] UPDATED (product changed): Stock ajusté. Ancien Produit ID {$originalProduct?->id}, Nouveau Produit ID {$product->id}. Item ID: {$cnItem->id}");
+            } else {
+                // Le produit n'a pas changé, on ajuste la différence de quantité
+                $quantityChangeForStock = $currentStockUnitQuantity - $originalStockUnitQuantity;
+                if ($quantityChangeForStock > 0) {
+                    $stockMovementType = 'inventory_adjustment'; // Augmentation du retour
+                    $notes = "Augmentation retour Avoir #{$creditNote->credit_note_number} - Article: {$product->name} ({$cnItem->quantity} {$cnItem->transactionUnit?->symbol} => {$currentStockUnitQuantity} {$product->stockUnit?->symbol}). Diff: {$quantityChangeForStock}";
+                } elseif ($quantityChangeForStock < 0) {
+                    $stockMovementType = 'inventory_adjustment'; // Diminution du retour
+                    $notes = "Diminution retour Avoir #{$creditNote->credit_note_number} - Article: {$product->name} ({$cnItem->quantity} {$cnItem->transactionUnit?->symbol} => {$currentStockUnitQuantity} {$product->stockUnit?->symbol}). Diff: {$quantityChangeForStock}";
+                } else {
+                    // Aucune modification de quantité de stock, mais peut-être d'autres champs. Pas d'impact stock.
+                    Log::info("[CreditNoteItemObserver] UPDATED: Aucune modification de stock_unit_quantity pour Produit ID {$product->id}. Item ID: {$cnItem->id}");
+                    return; 
+                }
+                Log::info("[CreditNoteItemObserver] UPDATED: Ajustement stock pour Produit ID {$product->id} de {$quantityChangeForStock}. Item ID: {$cnItem->id}");
             }
 
+        } elseif ($eventContext === 'delete' || $eventContext === 'delete_due_to_cn_status_change') {
+            // Pour 'delete', $cnItem contient les valeurs au moment de la suppression.
+            // Pour 'delete_due_to_cn_status_change', on annule l'impact précédent.
+            $quantityChangeForStock = -$currentStockUnitQuantity; // Négatif pour annuler
+            $stockMovementType = 'inventory_adjustment'; // Utiliser inventory_adjustment pour tous les types de mouvements
+            $notes = "Annulation impact stock Avoir #{$creditNote->credit_note_number} - Article: {$product->name} ({$cnItem->quantity} {$cnItem->transactionUnit?->symbol} => {$currentStockUnitQuantity} {$product->stockUnit?->symbol}). Contexte: {$eventContext}";
+            Log::info("[CreditNoteItemObserver] CONTEXT ({$eventContext}): Diminution stock (annulation) pour Produit ID {$product->id} de {$currentStockUnitQuantity}. Item ID: {$cnItem->id}");
+        }
+
+        if ($quantityChangeForStock != 0) {
+            $this->adjustProductStock($product, $quantityChangeForStock, $creditNote, $cnItem, $stockMovementType, $notes);
+        } else {
+             Log::info("[CreditNoteItemObserver] Aucune modification de stock nécessaire pour Produit ID {$product->id}. Changement: {$quantityChangeForStock}. Item ID: {$cnItem->id}. Event: {$eventContext}");
+        }
+    }
+
+    /**
+     * Ajuste le stock du produit et crée un mouvement de stock.
+     */
+    protected function adjustProductStock(Product $product, float $quantityAdjustment, CreditNote $creditNote, CreditNoteItem $cnItem, string $movementType, string $customNotes = ''):
+    void
+    {
+        if ($quantityAdjustment == 0) {
+            return;
+        }
+        
+        // Début de la transaction pour assurer l'atomicité
+        // DB::beginTransaction(); // Si non géré par l'appelant
+
+        try {
+            // L'ajustement peut être positif (augmentation) ou négatif (diminution)
+            if ($quantityAdjustment > 0) {
+                $product->increment('stock_quantity', $quantityAdjustment);
+            } else {
+                $product->decrement('stock_quantity', abs($quantityAdjustment));
+            }
+            $newStockQuantity = $product->fresh()->stock_quantity;
+            
+            $defaultNotes = $customNotes ?: "Mouvement de stock pour Avoir #{$creditNote->credit_note_number}, Article #{$cnItem->id} ({$product->name})";
+
             StockMovement::create([
-                'product_id' => $cnItem->product_id,
-                'type' => 'customer_return', // Retour client
-                'quantity_changed' => $quantityInStockUnit, // Positif
+                'product_id' => $product->id,
+                'type' => $movementType,
+                'quantity_changed' => $quantityAdjustment,
                 'new_stock_quantity_after_movement' => $newStockQuantity,
                 'related_document_type' => CreditNote::class,
                 'related_document_id' => $creditNote->id,
-                'user_id' => $creditNote->user_id,
-                'movement_date' => $creditNote->credit_note_date,
-                'notes' => $notes,
+                'related_document_item_id' => $cnItem->id, // Lier au CreditNoteItem spécifique
+                'user_id' => $creditNote->user_id ?? (auth()->check() && auth()->user() instanceof TenantUser ? auth()->user()->getKey() : null),
+                'movement_date' => $creditNote->credit_note_date ?? now(),
+                'notes' => $defaultNotes,
             ]);
-             Log::info("[CreditNoteItemObserver] StockMovement 'customer_return' created. Event: {$eventContext}");
 
-        } elseif ($eventContext === 'delete') {
-            // Convertir la quantité de l'unité de transaction vers l'unité de stock
-            $quantityInStockUnit = $this->getStockQuantityChange($cnItem);
-            
-            Log::info("[CreditNoteItemObserver] Decrementing stock (reversing return) for Product ID: {$product->id}, Qty: {$quantityInStockUnit}. Event: {$eventContext}");
-            $product->decrement('stock_quantity', $quantityInStockUnit); // Annuler la réintégration
-            $newStockQuantity = $product->fresh()->stock_quantity;
-            
-            // Préparer les notes avec informations sur l'unité
-            $notes = "Annulation item retour client - Avoir: {$creditNote->credit_note_number} - Article: {$product->name}";
-            
-            // Ajouter les informations d'unité de transaction si disponibles
-            if ($cnItem->transaction_unit_id && $cnItem->quantity) {
-                $transactionUnit = $cnItem->transactionUnit;
-                $notes .= " ({$cnItem->quantity} {$transactionUnit?->symbol})";
-                
-                // Si l'unité de transaction est différente de l'unité de stock
-                if ($product->stock_unit_id && $product->stock_unit_id != $cnItem->transaction_unit_id) {
-                    $notes .= " (converti en {$quantityInStockUnit} {$product->stockUnit?->symbol})"; 
-                }
-            }
-
-            StockMovement::create([
-                'product_id' => $cnItem->product_id,
-                'type' => 'customer_return_cancellation',
-                'quantity_changed' => -$quantityInStockUnit, // Négatif
-                'new_stock_quantity_after_movement' => $newStockQuantity,
-                'related_document_type' => CreditNote::class,
-                'related_document_id' => $creditNote->id,
-                'user_id' => auth()->check() && auth()->user() instanceof TenantUser ? auth()->user()->getKey() : null,
-                'movement_date' => now(),
-                'notes' => $notes,
-            ]);
-            Log::info("[CreditNoteItemObserver] StockMovement 'customer_return_cancellation' created. Event: {$eventContext}");
+            Log::info("[CreditNoteItemObserver.adjustProductStock] Stock ajusté pour Produit ID {$product->id} de {$quantityAdjustment}. Nouveau stock: {$newStockQuantity}. Type: {$movementType}");
+            // DB::commit(); // Si non géré par l'appelant
+        } catch (\Exception $e) {
+            // DB::rollBack(); // Si non géré par l'appelant
+            Log::critical("[CreditNoteItemObserver.adjustProductStock] Échec de l'ajustement du stock pour Produit ID {$product->id}: " . $e->getMessage());
+            // Propager l'exception ou gérer l'erreur comme il se doit
+            throw $e;
         }
     }
 }

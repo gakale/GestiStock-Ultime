@@ -53,4 +53,8 @@ Route::middleware([
     // Route pour la génération de PDF des factures - accessible sans authentification
     Route::get('/invoices/{invoiceId}/pdf', [PdfGenerationController::class, 'downloadInvoice'])
          ->name('tenant.invoices.pdf'); // Nommer la route est une bonne pratique
+         
+    // Route pour la génération de PDF des avoirs clients - accessible sans authentification
+    Route::get('/credit-notes/{creditNoteId}/pdf', [PdfGenerationController::class, 'downloadCreditNote'])
+         ->name('credit-notes.print'); // Nom de route utilisé dans ViewCreditNote.php
 });

@@ -2,7 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Invoice; // Assurez-vous que le namespace est correct pour votre modèle Invoice
+use App\Models\Invoice;
+use App\Models\CreditNote;
 use Illuminate\Http\Request;
 use Spatie\LaravelPdf\Facades\Pdf; // Utiliser la Facade
 use Illuminate\Support\Facades\App; // Pour le contexte du tenant
@@ -11,6 +12,46 @@ use Illuminate\Support\Facades\Response;
 
 class PdfGenerationController extends Controller
 {
+    /**
+     * Initialise le contexte du tenant si nécessaire
+     *
+     * @return void
+     */
+    private function initializeTenantContext()
+    {
+        // Vérifier si nous sommes dans un contexte de tenant
+        if (!tenant()) {
+            // Si nous ne sommes pas dans un contexte tenant, essayer de déterminer le tenant à partir de l'hôte
+            Log::info("[PdfGenerationController] Tentative de détermination du tenant à partir de l'hôte: " . request()->getHost());
+            
+            // Récupérer le domaine à partir de la requête
+            $domain = request()->getHost();
+            
+            // Supprimer le port s'il est présent
+            if (strpos($domain, ':') !== false) {
+                $domain = explode(':', $domain)[0];
+            }
+            
+            Log::info("[PdfGenerationController] Domaine extrait: {$domain}");
+            
+            // Essayer de trouver un tenant avec ce domaine
+            $tenantDomain = \Stancl\Tenancy\Database\Models\Domain::where('domain', $domain)->first();
+            
+            if ($tenantDomain) {
+                $tenant = $tenantDomain->tenant;
+                Log::info("[PdfGenerationController] Tenant trouvé via le domaine: " . $tenant->id);
+                
+                // Initialiser le tenant manuellement
+                tenancy()->initialize($tenant);
+                
+                Log::info("[PdfGenerationController] Tenant initialisé: " . tenant('id'));
+            } else {
+                Log::error("[PdfGenerationController] Aucun tenant trouvé pour le domaine: {$domain}");
+                abort(404, "Tenant not found for domain: {$domain}");
+            }
+        }
+    }
+
     public function downloadInvoice(string $invoiceId)
     {
         try {
@@ -18,37 +59,8 @@ class PdfGenerationController extends Controller
             Log::info("[PdfGenerationController] Début de downloadInvoice pour ID: {$invoiceId}");
             Log::info("[PdfGenerationController] Tenant actuel: " . (tenant() ? tenant('id') : 'Aucun tenant'));
             
-            // Vérifier si nous sommes dans un contexte de tenant
-            if (!tenant()) {
-                // Si nous ne sommes pas dans un contexte tenant, essayer de déterminer le tenant à partir de l'hôte
-                Log::info("[PdfGenerationController] Tentative de détermination du tenant à partir de l'hôte: " . request()->getHost());
-                
-                // Récupérer le domaine à partir de la requête
-                $domain = request()->getHost();
-                
-                // Supprimer le port s'il est présent
-                if (strpos($domain, ':') !== false) {
-                    $domain = explode(':', $domain)[0];
-                }
-                
-                Log::info("[PdfGenerationController] Domaine extrait: {$domain}");
-                
-                // Essayer de trouver un tenant avec ce domaine
-                $tenantDomain = \Stancl\Tenancy\Database\Models\Domain::where('domain', $domain)->first();
-                
-                if ($tenantDomain) {
-                    $tenant = $tenantDomain->tenant;
-                    Log::info("[PdfGenerationController] Tenant trouvé via le domaine: " . $tenant->id);
-                    
-                    // Initialiser le tenant manuellement
-                    tenancy()->initialize($tenant);
-                    
-                    Log::info("[PdfGenerationController] Tenant initialisé: " . tenant('id'));
-                } else {
-                    Log::error("[PdfGenerationController] Aucun tenant trouvé pour le domaine: {$domain}");
-                    abort(404, "Tenant not found for domain: {$domain}");
-                }
-            }
+            // Initialiser le contexte du tenant si nécessaire
+            $this->initializeTenantContext();
             
             try {
                 // Charger la facture avec ses relations
@@ -121,6 +133,77 @@ class PdfGenerationController extends Controller
                 Log::error("[PdfGenerationController] Erreur lors du chargement de la facture: " . $e->getMessage());
                 Log::error("[PdfGenerationController] Trace: " . $e->getTraceAsString());
                 return Response::make('Erreur lors du chargement de la facture: ' . $e->getMessage(), 500);
+            }
+        } catch (\Exception $e) {
+            Log::error("[PdfGenerationController] Erreur générale: " . $e->getMessage());
+            Log::error("[PdfGenerationController] Trace: " . $e->getTraceAsString());
+            return Response::make('Erreur générale: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Génère et télécharge un PDF d'avoir client
+     *
+     * @param string $creditNoteId L'ID de l'avoir client à télécharger
+     * @return mixed
+     */
+    public function downloadCreditNote(string $creditNoteId)
+    {
+        try {
+            // Déboguer le contexte du tenant
+            Log::info("[PdfGenerationController] Début de downloadCreditNote pour ID: {$creditNoteId}");
+            Log::info("[PdfGenerationController] Tenant actuel: " . (tenant() ? tenant('id') : 'Aucun tenant'));
+            
+            // Initialiser le contexte du tenant si nécessaire
+            $this->initializeTenantContext();
+            
+            try {
+                // Charger l'avoir avec ses relations
+                Log::info("[PdfGenerationController] Tentative de chargement de l'avoir ID: {$creditNoteId}");
+                
+                // Vérifier d'abord si l'avoir existe
+                $creditNoteExists = CreditNote::where('id', $creditNoteId)->exists();
+                Log::info("[PdfGenerationController] L'avoir existe: " . ($creditNoteExists ? 'Oui' : 'Non'));
+                
+                if (!$creditNoteExists) {
+                    Log::error("[PdfGenerationController] Avoir non trouvé avec ID: {$creditNoteId}");
+                    return Response::make('Avoir non trouvé', 404);
+                }
+                
+                // Charger l'avoir avec ses relations disponibles
+                $creditNote = CreditNote::where('id', $creditNoteId)->first();
+                
+                // Charger les relations disponibles
+                $creditNote->load(['client', 'items', 'items.product', 'invoice', 'user']);
+                
+                Log::info("[PdfGenerationController] Avoir chargé avec succès: {$creditNote->credit_note_number}");
+                
+                // Informations de l'entreprise simplifiées pour le débogage
+                $companyDetails = [
+                    'name' => tenant('name') ?? 'Votre Entreprise',
+                    'address' => 'Adresse de l\'entreprise',
+                    'city' => 'Ville de l\'entreprise',
+                    'phone' => 'Téléphone de l\'entreprise',
+                    'email' => 'Email de l\'entreprise',
+                    'vat_number' => 'Numéro TVA de l\'entreprise',
+                ];
+                
+                Log::info("[PdfGenerationController] Génération du PDF pour l'avoir: {$creditNote->credit_note_number}");
+                
+                // Générer le PDF avec la vue
+                Log::info("[PdfGenerationController] Génération et téléchargement du PDF");
+                return Pdf::view('pdf.credit-note', [
+                            'creditNote' => $creditNote,
+                            'company' => $companyDetails,
+                        ])
+                        ->format('a4')
+                        ->name('Avoir-' . $creditNote->credit_note_number . '.pdf')
+                        ->download(); // Forcer le téléchargement pour éviter les problèmes d'affichage
+                
+            } catch (\Exception $e) {
+                Log::error("[PdfGenerationController] Erreur lors du chargement de l'avoir: " . $e->getMessage());
+                Log::error("[PdfGenerationController] Trace: " . $e->getTraceAsString());
+                return Response::make('Erreur lors du chargement de l\'avoir: ' . $e->getMessage(), 500);
             }
         } catch (\Exception $e) {
             Log::error("[PdfGenerationController] Erreur générale: " . $e->getMessage());

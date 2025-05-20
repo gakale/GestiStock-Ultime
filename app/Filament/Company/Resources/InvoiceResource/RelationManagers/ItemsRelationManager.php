@@ -6,6 +6,7 @@ namespace App\Filament\Company\Resources\InvoiceResource\RelationManagers;
 
 use App\Models\Product;
 use App\Models\UnitOfMeasure;
+use App\Services\UnitConversionService;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -15,12 +16,78 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Filament\Forms\Get;
 use Filament\Forms\Set;
+use Illuminate\Support\Facades\Log;
 
 class ItemsRelationManager extends RelationManager
 {
     protected static string $relationship = 'items';
 
     protected static ?string $recordTitleAttribute = 'product_name';
+    
+    /**
+     * Calcule et met à jour le champ stock_unit_quantity
+     */
+    protected function updateStockUnitQuantity(Set $set, Get $get, Product $product, UnitOfMeasure $transactionUnit, float $quantity): void
+    {
+        // Si pas d'unité de stock définie, utiliser la même quantité
+        if (!$product->stockUnit) {
+            $set('stock_unit_quantity', $quantity);
+            return;
+        }
+        
+        // Si l'unité de transaction est la même que l'unité de stock, pas de conversion nécessaire
+        if ($product->stock_unit_id == $transactionUnit->id) {
+            $set('stock_unit_quantity', $quantity);
+            return;
+        }
+        
+        try {
+            $conversionService = app(UnitConversionService::class);
+            $stockUnitQuantity = $conversionService->convert(
+                $product,
+                $quantity,
+                $transactionUnit,
+                $product->stockUnit
+            );
+            
+            $set('stock_unit_quantity', $stockUnitQuantity);
+            
+            Log::info("[InvoiceItem] Conversion d'unité réussie", [
+                'product' => $product->name,
+                'transaction_quantity' => $quantity,
+                'transaction_unit' => $transactionUnit->symbol,
+                'stock_unit' => $product->stockUnit->symbol,
+                'stock_unit_quantity' => $stockUnitQuantity
+            ]);
+        } catch (\Exception $e) {
+            Log::error("[InvoiceItem] Erreur lors de la conversion d'unité", [
+                'error' => $e->getMessage(),
+                'product' => $product->name
+            ]);
+            
+            // En cas d'erreur, utiliser la même quantité
+            $set('stock_unit_quantity', 0);
+        }
+    }
+    
+    /**
+     * Calcule le total de la ligne
+     */
+    protected function calculateLineTotal(Set $set, Get $get): void
+    {
+        $quantity = (float)($get('quantity') ?? 0);
+        $unitPrice = (float)($get('unit_price') ?? 0);
+        $discountPercentage = (float)($get('discount_percentage') ?? 0);
+        $taxRate = (float)($get('tax_rate') ?? 0);
+        
+        $basePrice = $quantity * $unitPrice;
+        $discountAmount = $basePrice * ($discountPercentage / 100);
+        $priceAfterDiscount = $basePrice - $discountAmount;
+        $taxAmount = $priceAfterDiscount * ($taxRate / 100);
+        $lineTotal = $priceAfterDiscount + $taxAmount;
+        
+        $set('line_total', round($lineTotal, 2));
+    }
 
     public function form(Form $form): Form
     {
@@ -90,13 +157,68 @@ class ItemsRelationManager extends RelationManager
                                     $unitIds = array_merge($unitIds, $derivedUnits);
                                 }
                                 
-                                return UnitOfMeasure::whereIn('id', $unitIds)
-                                    ->get()
-                                    ->pluck('name_with_symbol', 'id')
-                                    ->toArray();
+                                // Récupérer les unités puis transformer avec l'accesseur
+                                $units = UnitOfMeasure::whereIn('id', $unitIds)->get();
+                                return $units->pluck('name_with_symbol', 'id')->toArray();
                             })
                             ->reactive()
                             ->required()
+                            ->afterStateUpdated(function (Set $set, ?string $state, Get $get) {
+                                $productId = $get('product_id');
+                                $quantity = (float)($get('quantity') ?? 0);
+                                
+                                if (!$productId || !$state) {
+                                    return;
+                                }
+                                
+                                $product = Product::with('stockUnit')->find($productId);
+                                $transactionUnit = UnitOfMeasure::find($state);
+                                
+                                if (!$product || !$transactionUnit) {
+                                    return;
+                                }
+                                
+                                // 1. Mettre à jour le prix unitaire en fonction de l'unité sélectionnée
+                                try {
+                                    // Si l'unité de transaction est différente de l'unité de vente, ajuster le prix
+                                    if ($product->sales_unit_id && $product->sales_unit_id != $state) {
+                                        $salesUnit = UnitOfMeasure::find($product->sales_unit_id);
+                                        
+                                        if ($salesUnit) {
+                                            $conversionService = app(UnitConversionService::class);
+                                            $conversionFactor = $conversionService->getConversionFactor(
+                                                $salesUnit,
+                                                $transactionUnit,
+                                                $product
+                                            );
+                                            
+                                            // Ajuster le prix en fonction du facteur de conversion
+                                            $newUnitPrice = (float)($product->selling_price ?? 0) * $conversionFactor;
+                                            $set('unit_price', round($newUnitPrice, 2));
+                                            
+                                            Log::info("[InvoiceItem] Prix ajusté pour unité de transaction", [
+                                                'product' => $product->name,
+                                                'base_price' => $product->selling_price,
+                                                'sales_unit' => $salesUnit->symbol,
+                                                'transaction_unit' => $transactionUnit->symbol,
+                                                'conversion_factor' => $conversionFactor,
+                                                'new_price' => $newUnitPrice
+                                            ]);
+                                        }
+                                    }
+                                } catch (\Exception $e) {
+                                    Log::error("[InvoiceItem] Erreur lors de la conversion de prix", [
+                                        'error' => $e->getMessage(),
+                                        'product' => $product->name
+                                    ]);
+                                }
+                                
+                                // 2. Calculer et mettre à jour stock_unit_quantity
+                                $this->updateStockUnitQuantity($set, $get, $product, $transactionUnit, $quantity);
+                                
+                                // 3. Recalculer le total de la ligne
+                                $this->calculateLineTotal($set, $get);
+                            })
                             ->columnSpan(1),
                     ]),
                 
@@ -119,62 +241,47 @@ class ItemsRelationManager extends RelationManager
                             ->required()
                             ->reactive()
                             ->afterStateUpdated(function (Set $set, Get $get) {
+                                $productId = $get('product_id');
+                                $transactionUnitId = $get('transaction_unit_id');
                                 $quantity = (float)($get('quantity') ?? 0);
-                                $unitPrice = (float)($get('unit_price') ?? 0);
-                                $discountPercentage = (float)($get('discount_percentage') ?? 0);
-                                $taxRate = (float)($get('tax_rate') ?? 0);
                                 
-                                $basePrice = $quantity * $unitPrice;
-                                $discountAmount = $basePrice * ($discountPercentage / 100);
-                                $priceAfterDiscount = $basePrice - $discountAmount;
-                                $taxAmount = $priceAfterDiscount * ($taxRate / 100);
-                                $lineTotal = $priceAfterDiscount + $taxAmount;
+                                // Mettre à jour stock_unit_quantity si le produit et l'unité sont sélectionnés
+                                if ($productId && $transactionUnitId) {
+                                    $product = Product::with('stockUnit')->find($productId);
+                                    $transactionUnit = UnitOfMeasure::find($transactionUnitId);
+                                    
+                                    if ($product && $transactionUnit) {
+                                        $this->updateStockUnitQuantity($set, $get, $product, $transactionUnit, $quantity);
+                                    }
+                                }
                                 
-                                $set('line_total', $lineTotal);
+                                // Recalculer le total de la ligne
+                                $this->calculateLineTotal($set, $get);
                             }),
                             
                         Forms\Components\TextInput::make('unit_price')
                             ->label('Prix unitaire HT')
                             ->numeric()
                             ->required()
+                            ->minValue(0)
+                            ->step(0.01)
                             ->prefix(config('app.currency_symbol', '€'))
                             ->reactive()
                             ->afterStateUpdated(function (Set $set, Get $get) {
-                                $quantity = (float)($get('quantity') ?? 0);
-                                $unitPrice = (float)($get('unit_price') ?? 0);
-                                $discountPercentage = (float)($get('discount_percentage') ?? 0);
-                                $taxRate = (float)($get('tax_rate') ?? 0);
-                                
-                                $basePrice = $quantity * $unitPrice;
-                                $discountAmount = $basePrice * ($discountPercentage / 100);
-                                $priceAfterDiscount = $basePrice - $discountAmount;
-                                $taxAmount = $priceAfterDiscount * ($taxRate / 100);
-                                $lineTotal = $priceAfterDiscount + $taxAmount;
-                                
-                                $set('line_total', $lineTotal);
+                                $this->calculateLineTotal($set, $get);
                             }),
                             
                         Forms\Components\TextInput::make('discount_percentage')
                             ->label('Remise %')
                             ->numeric()
                             ->default(0)
+                            ->required()
                             ->minValue(0)
                             ->maxValue(100)
                             ->suffix('%')
                             ->reactive()
                             ->afterStateUpdated(function (Set $set, Get $get) {
-                                $quantity = (float)($get('quantity') ?? 0);
-                                $unitPrice = (float)($get('unit_price') ?? 0);
-                                $discountPercentage = (float)($get('discount_percentage') ?? 0);
-                                $taxRate = (float)($get('tax_rate') ?? 0);
-                                
-                                $basePrice = $quantity * $unitPrice;
-                                $discountAmount = $basePrice * ($discountPercentage / 100);
-                                $priceAfterDiscount = $basePrice - $discountAmount;
-                                $taxAmount = $priceAfterDiscount * ($taxRate / 100);
-                                $lineTotal = $priceAfterDiscount + $taxAmount;
-                                
-                                $set('line_total', $lineTotal);
+                                $this->calculateLineTotal($set, $get);
                             }),
                             
                         Forms\Components\TextInput::make('tax_rate')
@@ -186,18 +293,7 @@ class ItemsRelationManager extends RelationManager
                             ->suffix('%')
                             ->reactive()
                             ->afterStateUpdated(function (Set $set, Get $get) {
-                                $quantity = (float)($get('quantity') ?? 0);
-                                $unitPrice = (float)($get('unit_price') ?? 0);
-                                $discountPercentage = (float)($get('discount_percentage') ?? 0);
-                                $taxRate = (float)($get('tax_rate') ?? 0);
-                                
-                                $basePrice = $quantity * $unitPrice;
-                                $discountAmount = $basePrice * ($discountPercentage / 100);
-                                $priceAfterDiscount = $basePrice - $discountAmount;
-                                $taxAmount = $priceAfterDiscount * ($taxRate / 100);
-                                $lineTotal = $priceAfterDiscount + $taxAmount;
-                                
-                                $set('line_total', $lineTotal);
+                                $this->calculateLineTotal($set, $get);
                             }),
                     ]),
                     
@@ -206,6 +302,10 @@ class ItemsRelationManager extends RelationManager
                     ->numeric()
                     ->prefix(config('app.currency_symbol', '€'))
                     ->disabled()
+                    ->dehydrated(),
+                    
+                // Champ caché pour stocker la quantité convertie en unité de stock
+                Forms\Components\Hidden::make('stock_unit_quantity')
                     ->dehydrated(),
             ]);
     }
