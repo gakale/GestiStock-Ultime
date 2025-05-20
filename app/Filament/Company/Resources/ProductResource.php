@@ -23,6 +23,8 @@ use Filament\Forms\Components\Toggle;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Grid;
 use Filament\Forms\Components\Select as FormsSelect; // Alias pour éviter conflit si Select est utilisé pour autre chose
+use Filament\Forms\Get; // Pour la logique conditionnelle
+use Filament\Forms\Set; // Pour la logique conditionnelle
 
 // Table Columns
 use Filament\Tables\Columns\TextColumn;
@@ -79,21 +81,49 @@ class ProductResource extends Resource
                             ->rows(3),
                     ]),
 
-                Section::make('Tarification')
+                Section::make('Tarification et Taxes')
                     ->columns(2)
                     ->schema([
                         TextInput::make('purchase_price')
-                            ->label('Prix d\'achat')
+                            ->label('Prix d\'achat de Base')
                             ->numeric()
-                            ->prefix('€') // Ou votre devise
+                            ->prefix('€')
                             ->minValue(0)
-                            ->nullable(),
+                            ->nullable()
+                            ->reactive(), // Pour que l'unité de prix de base puisse réagir
+                        FormsSelect::make('base_purchase_price_unit_id')
+                            ->label('Unité du Prix d\'Achat de Base')
+                            ->relationship('basePurchasePriceUnit', 'name')
+                            ->options(UnitOfMeasure::where('is_active', true)->pluck('name', 'id'))
+                            ->searchable()->preload()
+                            ->helperText("Unité pour laquelle le prix d'achat ci-dessus est défini.")
+                            // Pré-remplir dynamiquement ou laisser l'utilisateur choisir
+                            ->default(function (Get $get, ?Product $record) {
+                                // Si en édition et déjà défini, utiliser la valeur existante
+                                if ($record && $record->base_purchase_price_unit_id) return $record->base_purchase_price_unit_id;
+                                // Sinon, utiliser l'unité d'achat par défaut du produit ou son unité de stock
+                                return $get('purchase_unit_id') ?? $get('stock_unit_id');
+                            })
+                            ->required(), // Important d'avoir une unité pour le prix
+
                         TextInput::make('selling_price')
-                            ->label('Prix de vente')
+                            ->label('Prix de Vente de Base')
                             ->numeric()
-                            ->prefix('€') // Ou votre devise
+                            ->prefix('€')
                             ->required()
-                            ->minValue(0),
+                            ->minValue(0)
+                            ->reactive(),
+                        FormsSelect::make('base_selling_price_unit_id')
+                            ->label('Unité du Prix de Vente de Base')
+                            ->relationship('baseSellingPriceUnit', 'name')
+                            ->options(UnitOfMeasure::where('is_active', true)->pluck('name', 'id'))
+                            ->searchable()->preload()
+                            ->helperText("Unité pour laquelle le prix de vente ci-dessus est défini.")
+                            ->default(function (Get $get, ?Product $record) {
+                                if ($record && $record->base_selling_price_unit_id) return $record->base_selling_price_unit_id;
+                                return $get('sales_unit_id') ?? $get('stock_unit_id');
+                            })
+                            ->required(),
                     ]),
                     
                 Section::make('Unités de Mesure')
@@ -106,6 +136,16 @@ class ProductResource extends Resource
                             ->searchable()
                             ->preload()
                             ->required()
+                            ->reactive() // Pour que les unités de prix de base puissent réagir
+                            ->afterStateUpdated(function (Set $set, Get $get, ?string $state) {
+                                // Si l'unité de prix de base n'est pas encore définie ou était égale à l'ancienne unité de stock
+                                if (empty($get('base_purchase_price_unit_id')) || $get('base_purchase_price_unit_id') === $get('purchase_unit_id')) {
+                                    $set('base_purchase_price_unit_id', $get('purchase_unit_id') ?? $state);
+                                }
+                                if (empty($get('base_selling_price_unit_id')) || $get('base_selling_price_unit_id') === $get('sales_unit_id')) {
+                                    $set('base_selling_price_unit_id', $get('sales_unit_id') ?? $state);
+                                }
+                            })
                             ->helperText('L\'unité dans laquelle le stock est compté et géré.'),
                         FormsSelect::make('purchase_unit_id')
                             ->label('Unité d\'Achat par Défaut')
@@ -114,6 +154,10 @@ class ProductResource extends Resource
                             ->searchable()
                             ->preload()
                             ->nullable()
+                            ->reactive()
+                            ->afterStateUpdated(function (Set $set, Get $get, ?string $state) {
+                                $set('base_purchase_price_unit_id', $state ?? $get('stock_unit_id'));
+                            })
                             ->helperText('L\'unité typiquement utilisée pour acheter ce produit.'),
                         FormsSelect::make('sales_unit_id')
                             ->label('Unité de Vente par Défaut')
@@ -122,6 +166,10 @@ class ProductResource extends Resource
                             ->searchable()
                             ->preload()
                             ->nullable()
+                            ->reactive()
+                            ->afterStateUpdated(function (Set $set, Get $get, ?string $state) {
+                                $set('base_selling_price_unit_id', $state ?? $get('stock_unit_id'));
+                            })
                             ->helperText('L\'unité typiquement utilisée pour vendre ce produit.'),
                     ]),
                     
@@ -230,6 +278,14 @@ class ProductResource extends Resource
                     ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('salesUnit.name')
                     ->label('Unité Vente')
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('basePurchasePriceUnit.name')
+                    ->label('Unité Prix Achat')
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('baseSellingPriceUnit.name')
+                    ->label('Unité Prix Vente')
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
                 IconColumn::make('is_active')

@@ -48,23 +48,32 @@ class UnitConversionService
     /**
      * Convertit une quantité d'une unité à une autre
      * 
-     * @param Product $product Le produit concerné (pour le contexte)
      * @param float $quantity La quantité à convertir
      * @param UnitOfMeasure $fromUnit L'unité source
      * @param UnitOfMeasure $toUnit L'unité cible
+     * @param Product|null $product Le produit concerné (pour le contexte)
      * @return float La quantité convertie
-     * @throws \Exception Si la conversion n'est pas possible
+     * @throws \InvalidArgumentException Si la conversion n'est pas possible
      */
-    public function convert(Product $product, float $quantity, UnitOfMeasure $fromUnit, UnitOfMeasure $toUnit): float
+    public function convert(float $quantity, UnitOfMeasure $fromUnit, UnitOfMeasure $toUnit, ?Product $product = null): float
     {
         // Si les unités sont identiques
         if ($fromUnit->id === $toUnit->id) {
             return $quantity;
         }
 
+        // Vérifier si les unités ont des facteurs de conversion
+        if (!$fromUnit->conversion_factor && $fromUnit->base_unit_id) {
+            throw new \InvalidArgumentException("L'unité source {$fromUnit->name} n'a pas de facteur de conversion défini.");
+        }
+        
+        if (!$toUnit->conversion_factor && $toUnit->base_unit_id) {
+            throw new \InvalidArgumentException("L'unité cible {$toUnit->name} n'a pas de facteur de conversion défini.");
+        }
+
         // Étape 1: Convertir fromUnit vers son unité de base (si elle en a une)
-        $quantityInFromUnitBase = $fromUnit->convertToBaseUnit($quantity);
-        $currentBaseUnit = $fromUnit->baseUnit ?? $fromUnit; // L'unité de base de fromUnit, ou fromUnit si c'est déjà une base
+        $quantityInFromUnitBase = $fromUnit->base_unit_id ? $quantity * $fromUnit->conversion_factor : $quantity;
+        $currentBaseUnit = $fromUnit->base_unit_id ? UnitOfMeasure::find($fromUnit->base_unit_id) : $fromUnit;
 
         // Étape 2: Si l'unité de base de fromUnit est la même que toUnit
         if ($currentBaseUnit->id === $toUnit->id) {
@@ -73,24 +82,18 @@ class UnitConversionService
 
         // Étape 3: Si toUnit est une dérivée de currentBaseUnit
         if ($toUnit->base_unit_id === $currentBaseUnit->id) {
-            return $toUnit->convertFromBaseUnit($quantityInFromUnitBase);
+            return $quantityInFromUnitBase / $toUnit->conversion_factor;
         }
         
         // Étape 4: Si les deux unités partagent la même unité de base ultime
         if ($fromUnit->base_unit_id && $toUnit->base_unit_id && $fromUnit->base_unit_id === $toUnit->base_unit_id) {
             // Les deux unités ont la même unité de base
-            return $toUnit->convertFromBaseUnit($quantityInFromUnitBase);
+            return ($quantity * $fromUnit->conversion_factor) / $toUnit->conversion_factor;
         }
         
-        // Étape 5: Tentative de trouver un chemin de conversion plus complexe
-        // Pour l'instant, cette implémentation est simplifiée
-        // Une implémentation plus avancée pourrait construire un graphe des unités
-        // et trouver le chemin de conversion le plus court
-        
         // Journalisation de la tentative de conversion échouée
-        Log::warning("Tentative de conversion échouée", [
-            'product_id' => $product->id,
-            'product_name' => $product->name,
+        $productInfo = $product ? "pour le produit {$product->name} (ID: {$product->id})" : "sans contexte de produit";
+        Log::warning("Tentative de conversion échouée {$productInfo}", [
             'from_unit_id' => $fromUnit->id,
             'from_unit_name' => $fromUnit->name,
             'to_unit_id' => $toUnit->id,
@@ -99,7 +102,7 @@ class UnitConversionService
         ]);
 
         // Pour un MVP, si les cas ci-dessus ne s'appliquent pas, lever une exception
-        throw new \Exception("Conversion d'unité non supportée directement entre {$fromUnit->name} et {$toUnit->name} pour le produit {$product->name}. Vérifiez la configuration des unités de base.");
+        throw new \InvalidArgumentException("Conversion d'unité non supportée directement entre {$fromUnit->name} et {$toUnit->name}. Vérifiez la configuration des unités de base.");
     }
     
     /**

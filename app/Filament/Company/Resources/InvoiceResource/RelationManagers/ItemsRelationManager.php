@@ -14,6 +14,12 @@ use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\Placeholder;
+use Filament\Forms\Components\Hidden;
+use Filament\Tables\Columns\TextColumn;
 use Filament\Forms\Get;
 use Filament\Forms\Set;
 use Illuminate\Support\Facades\Log;
@@ -44,10 +50,10 @@ class ItemsRelationManager extends RelationManager
         try {
             $conversionService = app(UnitConversionService::class);
             $stockUnitQuantity = $conversionService->convert(
-                $product,
                 $quantity,
                 $transactionUnit,
-                $product->stockUnit
+                $product->stockUnit,
+                $product
             );
             
             $set('stock_unit_quantity', $stockUnitQuantity);
@@ -59,7 +65,7 @@ class ItemsRelationManager extends RelationManager
                 'stock_unit' => $product->stockUnit->symbol,
                 'stock_unit_quantity' => $stockUnitQuantity
             ]);
-        } catch (\Exception $e) {
+        } catch (\InvalidArgumentException $e) {
             Log::error("[InvoiceItem] Erreur lors de la conversion d'unité", [
                 'error' => $e->getMessage(),
                 'product' => $product->name
@@ -100,124 +106,84 @@ class ItemsRelationManager extends RelationManager
                             ->relationship('product', 'name', fn (Builder $query) => $query->where('is_active', true))
                             ->searchable()
                             ->preload()
+                            ->required()
                             ->reactive()
-                            ->afterStateUpdated(function (Set $set, ?string $state, Get $get) {
+                            ->afterStateUpdated(function (Set $set, ?string $state, UnitConversionService $conversionService) {
                                 if ($state) {
-                                    $product = Product::find($state);
-                                    $set('unit_price', $product?->selling_price ?? 0);
-                                    $set('product_name', $product?->name); // Copie
-                                    $set('product_sku', $product?->sku);   // Copie
-                                    
-                                    // Définir l'unité de vente par défaut du produit
-                                    if ($product && $product->sales_unit_id) {
-                                        $set('transaction_unit_id', $product->sales_unit_id);
+                                    $product = Product::with(['salesUnit', 'baseSellingPriceUnit'])->find($state);
+                                    if ($product) {
+                                        // Pré-remplir les champs avec les données du produit
+                                        $set('product_name', $product->name);
+                                        $set('product_sku', $product->sku);
+                                        $set('description', $product->name);
+                                        
+                                        // Pré-remplir l'unité de transaction avec l'unité de vente par défaut du produit
+                                        $transactionUnitId = $product->sales_unit_id ?? $product->stock_unit_id;
+                                        $set('transaction_unit_id', $transactionUnitId);
+
+                                        // Pré-remplir le prix unitaire basé sur la conversion
+                                        if ($transactionUnitId && $product->baseSellingPriceUnit && $product->selling_price > 0) {
+                                            $transactionUnit = UnitOfMeasure::find($transactionUnitId);
+                                            try {
+                                                // Le prix du produit est dans $product->baseSellingPriceUnit
+                                                // Nous voulons le prix pour $transactionUnit
+                                                $factor = $conversionService->convert(1, $transactionUnit, $product->baseSellingPriceUnit, $product);
+                                                $set('unit_price', round((float)$product->selling_price * $factor, 2));
+                                            } catch (\InvalidArgumentException $e) {
+                                                Log::error("Erreur conversion prix (vente) pour produit {$product->id}: " . $e->getMessage());
+                                                $set('unit_price', $product->selling_price); // Fallback au prix de base sans conversion
+                                            }
+                                        } else {
+                                            $set('unit_price', $product->selling_price); // Fallback si pas d'unités pour conversion
+                                        }
                                     }
-                                } else { // Si le produit est déselectionné
-                                    $set('unit_price', 0);
+                                } else {
+                                    // Réinitialiser les champs si aucun produit n'est sélectionné
                                     $set('product_name', null);
                                     $set('product_sku', null);
+                                    $set('unit_price', 0);
+                                    $set('description', null);
                                     $set('transaction_unit_id', null);
                                 }
                             })
-                            ->required()
                             ->columnSpan(2),
                             
                         Forms\Components\Select::make('transaction_unit_id')
-                            ->label('Unité')
-                            ->options(function (Get $get) {
-                                $productId = $get('product_id');
-                                if (!$productId) {
-                                    return [];
-                                }
-                                
-                                $product = Product::find($productId);
-                                if (!$product) {
-                                    return [];
-                                }
-                                
-                                // Récupérer toutes les unités compatibles avec ce produit
-                                // Cela inclut l'unité de stock, l'unité d'achat, l'unité de vente et leurs unités dérivées
-                                $unitIds = [];
-                                
-                                // Ajouter l'unité de vente si définie
-                                if ($product->sales_unit_id) {
-                                    $unitIds[] = $product->sales_unit_id;
-                                    
-                                    // Ajouter les unités dérivées de l'unité de vente
-                                    $derivedUnits = UnitOfMeasure::where('base_unit_id', $product->sales_unit_id)->pluck('id')->toArray();
-                                    $unitIds = array_merge($unitIds, $derivedUnits);
-                                }
-                                
-                                // Ajouter l'unité de stock si différente de l'unité de vente
-                                if ($product->stock_unit_id && !in_array($product->stock_unit_id, $unitIds)) {
-                                    $unitIds[] = $product->stock_unit_id;
-                                    
-                                    // Ajouter les unités dérivées de l'unité de stock
-                                    $derivedUnits = UnitOfMeasure::where('base_unit_id', $product->stock_unit_id)->pluck('id')->toArray();
-                                    $unitIds = array_merge($unitIds, $derivedUnits);
-                                }
-                                
-                                // Récupérer les unités puis transformer avec l'accesseur
-                                $units = UnitOfMeasure::whereIn('id', $unitIds)->get();
-                                return $units->pluck('name_with_symbol', 'id')->toArray();
-                            })
-                            ->reactive()
+                            ->label('Unité de Vente')
+                            ->options(UnitOfMeasure::where('is_active', true)->pluck('name', 'id'))
+                            ->searchable()
+                            ->preload()
                             ->required()
-                            ->afterStateUpdated(function (Set $set, ?string $state, Get $get) {
+                            ->reactive()
+                            ->afterStateUpdated(function (Set $set, Get $get, ?string $state, UnitConversionService $conversionService) {
                                 $productId = $get('product_id');
                                 $quantity = (float)($get('quantity') ?? 0);
                                 
-                                if (!$productId || !$state) {
-                                    return;
-                                }
-                                
-                                $product = Product::with('stockUnit')->find($productId);
-                                $transactionUnit = UnitOfMeasure::find($state);
-                                
-                                if (!$product || !$transactionUnit) {
-                                    return;
-                                }
-                                
-                                // 1. Mettre à jour le prix unitaire en fonction de l'unité sélectionnée
-                                try {
-                                    // Si l'unité de transaction est différente de l'unité de vente, ajuster le prix
-                                    if ($product->sales_unit_id && $product->sales_unit_id != $state) {
-                                        $salesUnit = UnitOfMeasure::find($product->sales_unit_id);
+                                if ($productId && $state) {
+                                    $product = Product::with('baseSellingPriceUnit')->find($productId);
+                                    $transactionUnit = UnitOfMeasure::find($state);
+                                    
+                                    if ($product && $transactionUnit) {
+                                        // Mettre à jour la quantité en unité de stock
+                                        $this->updateStockUnitQuantity($set, $get, $product, $transactionUnit, $quantity);
                                         
-                                        if ($salesUnit) {
-                                            $conversionService = app(UnitConversionService::class);
-                                            $conversionFactor = $conversionService->getConversionFactor(
-                                                $salesUnit,
-                                                $transactionUnit,
-                                                $product
-                                            );
-                                            
-                                            // Ajuster le prix en fonction du facteur de conversion
-                                            $newUnitPrice = (float)($product->selling_price ?? 0) * $conversionFactor;
-                                            $set('unit_price', round($newUnitPrice, 2));
-                                            
-                                            Log::info("[InvoiceItem] Prix ajusté pour unité de transaction", [
-                                                'product' => $product->name,
-                                                'base_price' => $product->selling_price,
-                                                'sales_unit' => $salesUnit->symbol,
-                                                'transaction_unit' => $transactionUnit->symbol,
-                                                'conversion_factor' => $conversionFactor,
-                                                'new_price' => $newUnitPrice
-                                            ]);
+                                        // Mettre à jour le prix unitaire en fonction de l'unité de transaction
+                                        if ($product->baseSellingPriceUnit && $product->selling_price > 0) {
+                                            try {
+                                                $factor = $conversionService->convert(1, $transactionUnit, $product->baseSellingPriceUnit, $product);
+                                                $set('unit_price', round((float)$product->selling_price * $factor, 2));
+                                            } catch (\InvalidArgumentException $e) {
+                                                Log::error("Erreur conversion prix (vente) pour produit {$product->id} après changement d'unité: " . $e->getMessage());
+                                                $set('unit_price', $product->selling_price); // Fallback
+                                            }
+                                        } elseif ($product) {
+                                            $set('unit_price', $product->selling_price); // Fallback
                                         }
+                                        
+                                        // Recalculer le total de la ligne
+                                        $this->calculateLineTotal($set, $get);
                                     }
-                                } catch (\Exception $e) {
-                                    Log::error("[InvoiceItem] Erreur lors de la conversion de prix", [
-                                        'error' => $e->getMessage(),
-                                        'product' => $product->name
-                                    ]);
                                 }
-                                
-                                // 2. Calculer et mettre à jour stock_unit_quantity
-                                $this->updateStockUnitQuantity($set, $get, $product, $transactionUnit, $quantity);
-                                
-                                // 3. Recalculer le total de la ligne
-                                $this->calculateLineTotal($set, $get);
                             })
                             ->columnSpan(1),
                     ]),

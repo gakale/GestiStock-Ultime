@@ -26,7 +26,9 @@ class Product extends Model
         'slug',
         'description',
         'purchase_price',
+        'base_purchase_price_unit_id', // Nouveau champ pour l'unité de prix d'achat
         'selling_price',
+        'base_selling_price_unit_id', // Nouveau champ pour l'unité de prix de vente
         'stock_quantity',
         'stock_min_threshold',
         'stock_reorder_point',
@@ -35,7 +37,7 @@ class Product extends Model
         'barcode',
         'is_active',
         'product_category_id',
-        // Nouveaux champs d'unité
+        // Champs d'unité
         'stock_unit_id',
         'purchase_unit_id',
         'sales_unit_id',
@@ -73,11 +75,28 @@ class Product extends Model
             if (empty($product->sku)) {
                 $product->sku = 'PROD-' . strtoupper(Str::random(6));
             }
+            
+            // Si l'unité de prix d'achat de base n'est pas définie, utiliser l'unité d'achat par défaut ou l'unité de stock
+            if (empty($product->base_purchase_price_unit_id)) {
+                $product->base_purchase_price_unit_id = $product->purchase_unit_id ?? $product->stock_unit_id;
+            }
+            // Si l'unité de prix de vente de base n'est pas définie, utiliser l'unité de vente par défaut ou l'unité de stock
+            if (empty($product->base_selling_price_unit_id)) {
+                $product->base_selling_price_unit_id = $product->sales_unit_id ?? $product->stock_unit_id;
+            }
         });
 
         static::updating(function ($product) {
             if ($product->isDirty('name') && !$product->isDirty('slug')) {
                  $product->slug = Str::slug($product->name);
+            }
+            
+            // Idem pour la mise à jour si les champs sont vidés
+            if (empty($product->base_purchase_price_unit_id)) {
+                $product->base_purchase_price_unit_id = $product->purchase_unit_id ?? $product->stock_unit_id;
+            }
+            if (empty($product->base_selling_price_unit_id)) {
+                $product->base_selling_price_unit_id = $product->sales_unit_id ?? $product->stock_unit_id;
             }
         });
     }
@@ -102,6 +121,17 @@ class Product extends Model
     public function salesUnit(): BelongsTo
     {
         return $this->belongsTo(UnitOfMeasure::class, 'sales_unit_id');
+    }
+    
+    // Nouvelles relations pour les unités de prix de base
+    public function basePurchasePriceUnit(): BelongsTo
+    {
+        return $this->belongsTo(UnitOfMeasure::class, 'base_purchase_price_unit_id');
+    }
+
+    public function baseSellingPriceUnit(): BelongsTo
+    {
+        return $this->belongsTo(UnitOfMeasure::class, 'base_selling_price_unit_id');
     }
     
     /**
@@ -145,10 +175,12 @@ class Product extends Model
         return LogOptions::defaults()
             ->logOnly([
                 'name', 'sku', 'description', 'product_category_id',
-                'purchase_price', 'selling_price', 'stock_quantity',
+                'purchase_price', 'base_purchase_price_unit_id', // Ajouter l'unité de prix d'achat
+                'selling_price', 'base_selling_price_unit_id', // Ajouter l'unité de prix de vente
+                'stock_quantity',
                 'is_active', 'stock_min_threshold', 'stock_reorder_point',
                 'stock_max_threshold',
-                'stock_unit_id', 'purchase_unit_id', 'sales_unit_id' // Nouveaux champs d'unités
+                'stock_unit_id', 'purchase_unit_id', 'sales_unit_id'
             ])
             ->logOnlyDirty()
             ->dontSubmitEmptyLogs()

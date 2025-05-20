@@ -6,6 +6,7 @@ namespace App\Filament\Company\Resources\PurchaseOrderResource\RelationManagers;
 
 use App\Models\Product;
 use App\Models\UnitOfMeasure;
+use App\Services\UnitConversionService; // Importer le service
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -16,9 +17,11 @@ use Illuminate\Database\Eloquent\SoftDeletingScope;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\Placeholder;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Forms\Get;
 use Filament\Forms\Set;
+use Illuminate\Support\Facades\Log;
 
 class ItemsRelationManager extends RelationManager
 {
@@ -37,17 +40,37 @@ class ItemsRelationManager extends RelationManager
                     ->preload()
                     ->required()
                     ->reactive()
-                    ->afterStateUpdated(function (Set $set, ?string $state) {
+                    ->afterStateUpdated(function (Set $set, ?string $state, UnitConversionService $conversionService) {
                         if ($state) {
-                            $product = Product::find($state);
+                            $product = Product::with(['purchaseUnit', 'basePurchasePriceUnit'])->find($state);
                             if ($product) {
                                 // Pré-remplir les champs avec les données du produit
                                 $set('product_name', $product->name);
                                 $set('product_sku', $product->sku);
-                                $set('unit_price', $product->purchase_price);
                                 
                                 // Pré-remplir l'unité de transaction avec l'unité d'achat par défaut du produit
-                                $set('transaction_unit_id', $product->purchase_unit_id ?? $product->stock_unit_id);
+                                $transactionUnitId = $product->purchase_unit_id ?? $product->stock_unit_id;
+                                $set('transaction_unit_id', $transactionUnitId);
+
+                                // Pré-remplir le prix unitaire basé sur la conversion
+                                if ($transactionUnitId && $product->basePurchasePriceUnit && $product->purchase_price > 0) {
+                                    $transactionUnit = UnitOfMeasure::find($transactionUnitId);
+                                    try {
+                                        // Le prix du produit est dans $product->basePurchasePriceUnit
+                                        // Nous voulons le prix pour $transactionUnit
+                                        // Facteur pour convertir 1 transactionUnit en basePurchasePriceUnit
+                                        // Exemple: Achat en Carton (transactionUnit), prix base en Pièce (basePurchasePriceUnit)
+                                        // 1 Carton = 12 Pièces. Facteur = 12.
+                                        // Prix Carton = Prix Pièce * 12.
+                                        $factor = $conversionService->convert(1, $transactionUnit, $product->basePurchasePriceUnit, $product);
+                                        $set('unit_price', round((float)$product->purchase_price * $factor, 2)); // Ajuster précision si besoin
+                                    } catch (\InvalidArgumentException $e) {
+                                        Log::error("Erreur conversion prix (achat) pour produit {$product->id}: " . $e->getMessage());
+                                        $set('unit_price', $product->purchase_price); // Fallback au prix de base sans conversion
+                                    }
+                                } else {
+                                    $set('unit_price', $product->purchase_price); // Fallback si pas d'unités pour conversion
+                                }
                             }
                         } else {
                             // Réinitialiser les champs si aucun produit n'est sélectionné
@@ -57,6 +80,7 @@ class ItemsRelationManager extends RelationManager
                             $set('transaction_unit_id', null);
                         }
                     }),
+                    
                 
                 TextInput::make('product_name')
                     ->label('Nom du produit')
@@ -68,47 +92,29 @@ class ItemsRelationManager extends RelationManager
                 
                 Select::make('transaction_unit_id')
                     ->label('Unité de Commande')
-                    ->options(function (Get $get) {
-                        $productId = $get('product_id');
-                        if (!$productId) {
-                            return [];
-                        }
-                        
-                        $product = Product::find($productId);
-                        if (!$product) {
-                            return [];
-                        }
-                        
-                        // Récupérer toutes les unités compatibles avec ce produit
-                        $unitIds = [];
-                        
-                        // Ajouter l'unité d'achat si définie
-                        if ($product->purchase_unit_id) {
-                            $unitIds[] = $product->purchase_unit_id;
-                            
-                            // Ajouter les unités dérivées de l'unité d'achat
-                            $derivedUnits = UnitOfMeasure::where('base_unit_id', $product->purchase_unit_id)->pluck('id')->toArray();
-                            $unitIds = array_merge($unitIds, $derivedUnits);
-                        }
-                        
-                        // Ajouter l'unité de stock si différente de l'unité d'achat
-                        if ($product->stock_unit_id && !in_array($product->stock_unit_id, $unitIds)) {
-                            $unitIds[] = $product->stock_unit_id;
-                            
-                            // Ajouter les unités dérivées de l'unité de stock
-                            $derivedUnits = UnitOfMeasure::where('base_unit_id', $product->stock_unit_id)->pluck('id')->toArray();
-                            $unitIds = array_merge($unitIds, $derivedUnits);
-                        }
-                        
-                        return UnitOfMeasure::whereIn('id', $unitIds)
-                            ->get()
-                            ->pluck('name_with_symbol', 'id')
-                            ->toArray();
-                    })
+                    ->options(UnitOfMeasure::where('is_active', true)->pluck('name', 'id'))
                     ->searchable()
                     ->preload()
                     ->required()
-                    ->reactive(),
+                    ->reactive()
+                    ->afterStateUpdated(function (Set $set, Get $get, ?string $state, UnitConversionService $conversionService) {
+                        $productId = $get('product_id');
+                        if ($productId && $state) {
+                            $product = Product::with('basePurchasePriceUnit')->find($productId);
+                            $transactionUnit = UnitOfMeasure::find($state);
+                            if ($product && $transactionUnit && $product->basePurchasePriceUnit && $product->purchase_price > 0) {
+                                try {
+                                    $factor = $conversionService->convert(1, $transactionUnit, $product->basePurchasePriceUnit, $product);
+                                    $set('unit_price', round((float)$product->purchase_price * $factor, 2));
+                                } catch (\InvalidArgumentException $e) {
+                                    Log::error("Erreur conversion prix (achat) pour produit {$product->id} après changement d'unité: " . $e->getMessage());
+                                    $set('unit_price', $product->purchase_price); // Fallback
+                                }
+                            } elseif ($product) {
+                                $set('unit_price', $product->purchase_price); // Fallback
+                            }
+                        }
+                    }),
                 
                 TextInput::make('quantity')
                     ->label('Quantité Commandée')

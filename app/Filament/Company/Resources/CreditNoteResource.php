@@ -394,6 +394,8 @@ class CreditNoteResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            // Tri par défaut par date décroissante (plus récentes en premier)
+            ->defaultSort('credit_note_date', 'desc')
             ->columns([
                 TextColumn::make('credit_note_number')
                     ->label('Numéro d\'avoir')

@@ -9,6 +9,7 @@ use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\DeliveryNoteItem;
 use App\Models\DeliveryNote;
+use App\Models\Product;
 use App\Models\SalesOrder;
 use App\Models\PaymentReceived;
 use App\Models\CreditNoteItem;
@@ -33,6 +34,7 @@ use Spatie\Activitylog\Models\Activity;
 use App\Observers\ActivityLogObserver;
 use App\Models\GoodsReceipt;
 use App\Observers\GoodsReceiptObserver;
+use App\Observers\ProductObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -67,5 +69,8 @@ class AppServiceProvider extends ServiceProvider
         // Observateur pour les logs d'activité
         Activity::observe(ActivityLogObserver::class);
         GoodsReceipt::observe(GoodsReceiptObserver::class);
+        
+        // Observateur pour les produits (gestion du stock initial)
+        Product::observe(ProductObserver::class);
     }
 }
