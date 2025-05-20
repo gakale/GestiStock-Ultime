@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Company\Resources\CreditNoteResource\Pages;
 
 use App\Filament\Company\Resources\CreditNoteResource;
@@ -103,18 +105,13 @@ class ViewCreditNote extends ViewRecord
                     
                     $this->redirect($this->getResource()::getUrl('view', ['record' => $this->record]));
                 }),
-            Actions\Action::make('print')
-                ->label('Imprimer')
-                ->icon('heroicon-o-printer')
-                ->color('gray')
+            Actions\Action::make('downloadPdf')
+                ->label('Télécharger PDF')
+                ->icon('heroicon-o-document-arrow-down')
+                ->color('info')
                 ->url(function () {
-                    // Utiliser la même approche que pour les factures
-                    $protocol = request()->secure() ? 'https://' : 'http://';
-                    $host = request()->getHost();
-                    $port = ':8000'; // Ajouter le port pour le développement local
-                    
-                    // Route avec paramètre pour générer le PDF de l'avoir
-                    return $protocol . $host . $port . '/credit-notes/' . $this->record->id . '/pdf';
+                    // Utiliser la route nommée
+                    return route('direct.credit-note.pdf', ['creditNoteId' => $this->record->id]);
                 })
                 ->openUrlInNewTab(),
         ];

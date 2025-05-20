@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Company\Resources\InvoiceResource\Pages;
 
 use App\Filament\Company\Resources\InvoiceResource;
@@ -22,13 +24,14 @@ class ViewInvoice extends ViewRecord
                 ->icon('heroicon-o-document-arrow-down')
                 ->color('info')
                 ->url(function () {
-                    // Utiliser la route directe sans passer par le tenant
-                    $protocol = request()->secure() ? 'https://' : 'http://';
-                    $host = request()->getHost();
-                    $port = ':8000'; // Ajouter le port pour le développement local
+                    // Utiliser la route nommée
+                    return route('direct.invoice.pdf', ['invoiceId' => $this->record->id]);
                     
-                    // Route avec paramètre pour générer le PDF de la facture
-                    return $protocol . $host . $port . '/direct-pdf/' . $this->record->id;
+                    // Ou si vous préférez construire l'URL manuellement :
+                    // $protocol = request()->secure() ? 'https://' : 'http://';
+                    // $host = request()->getHost();
+                    // $port = request()->getPort() && !in_array(request()->getPort(), [80, 443]) ? ':' . request()->getPort() : '';
+                    // return $protocol . $host . $port . '/direct-pdf/invoice/' . $this->record->id;
                 })
                 ->openUrlInNewTab() // Ouvrir dans un nouvel onglet pour ne pas quitter la page Filament
         ];

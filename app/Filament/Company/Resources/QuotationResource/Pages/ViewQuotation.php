@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Company\Resources\QuotationResource\Pages;
 
 use App\Filament\Company\Resources\QuotationResource;
@@ -15,6 +17,15 @@ class ViewQuotation extends ViewRecord
         return [
             Actions\EditAction::make(),
             Actions\DeleteAction::make(),
+            Actions\Action::make('downloadPdf')
+                ->label('Télécharger PDF')
+                ->icon('heroicon-o-document-arrow-down')
+                ->color('info')
+                ->url(function () {
+                    // Utiliser la route nommée
+                    return route('direct.quotation.pdf', ['quotationId' => $this->record->id]);
+                })
+                ->openUrlInNewTab(),
         ];
     }
 }

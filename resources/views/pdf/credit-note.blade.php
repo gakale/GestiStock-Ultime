@@ -132,11 +132,13 @@
         <div class="header">
             <div class="company-details">
                 <h2>{{ $company['name'] }}</h2>
-                <p>{{ $company['address'] }}</p>
-                <p>{{ $company['city'] }}</p>
-                <p>Tél: {{ $company['phone'] }}</p>
-                <p>Email: {{ $company['email'] }}</p>
-                <p>N° TVA: {{ $company['vat_number'] }}</p>
+                @if(!empty($company['address_line1']))<p>{{ $company['address_line1'] }}</p>@endif
+                @if(!empty($company['address_line2']))<p>{{ $company['address_line2'] }}</p>@endif
+                <p>{{ $company['postal_code'] ?? '' }} {{ $company['city'] }}</p>
+                <p>{{ $company['country'] ?? '' }}</p>
+                @if(!empty($company['phone']))<p>Tél: {{ $company['phone'] }}</p>@endif
+                @if(!empty($company['email']))<p>Email: {{ $company['email'] }}</p>@endif
+                @if(!empty($company['vat_number']))<p>N° TVA: {{ $company['vat_number'] }}</p>@endif
             </div>
             <div class="client-details">
                 <h3>Client</h3>
@@ -298,7 +300,7 @@
         @endif
 
         <div class="footer">
-            <p>{{ $company['name'] }} - {{ $company['address'] }}, {{ $company['city'] }} - N° TVA: {{ $company['vat_number'] }}</p>
+            <p>{{ $company['name'] }} - {{ $company['address_line1'] ?? '' }}{{ !empty($company['address_line2']) ? ', '.$company['address_line2'] : '' }}, {{ $company['postal_code'] ?? '' }} {{ $company['city'] }} - {{ !empty($company['vat_number']) ? 'N° TVA: '.$company['vat_number'] : '' }}</p>
         </div>
     </div>
 </body>

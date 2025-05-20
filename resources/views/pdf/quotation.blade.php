@@ -3,87 +3,96 @@
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-    <title>Facture {{ $invoice->invoice_number }}</title>
+    <title>Devis {{ $quotation->quotation_number }}</title>
     <style>
-        body {
-            font-family: 'Helvetica', 'Arial', sans-serif; /* Choisir une police compatible PDF */
-            font-size: 12px;
-            line-height: 1.4;
+        body { 
+            font-family: 'Helvetica', 'Arial', sans-serif; 
+            font-size: 12px; 
             color: #333;
-            margin: 0;
-            padding: 0;
+            line-height: 1.5;
         }
-        .container {
-            width: 100%;
-            margin: 20px;
-            padding: 20px;
-            border: 1px solid #eee;
+        .container { 
+            width: 100%; 
+            margin: 0; 
+            padding: 20px; 
+            border: 1px solid #eee; 
         }
-        .header, .footer {
-            text-align: center;
-            margin-bottom: 20px;
+        .header h1 { 
+            margin: 0; 
+            font-size: 24px; 
+            color: #2c3e50;
         }
-        .header h1 {
-            margin: 0;
-            font-size: 24px;
-            color: #222;
-        }
-        .company-details, .client-details, .invoice-details {
-            margin-bottom: 20px;
-        }
-        .company-details p, .client-details p, .invoice-details p {
-            margin: 2px 0;
+        .clearfix::after {
+            content: "";
+            display: table;
+            clear: both;
         }
         .company-details {
             float: left;
-            width: 50%;
+            width: 45%;
+            margin-bottom: 20px;
         }
         .client-details {
             float: right;
             width: 45%;
-            text-align: right;
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #eee;
+            border-radius: 5px;
         }
-        .invoice-details {
+        .document-details {
             clear: both;
-            padding-top: 20px;
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+        }
+        .document-details h2 {
+            margin-top: 0;
+            color: #3498db;
         }
         table {
             width: 100%;
             border-collapse: collapse;
             margin-bottom: 20px;
         }
-        th, td {
-            border: 1px solid #ddd;
+        table th, table td {
             padding: 8px;
-            text-align: left;
+            border: 1px solid #ddd;
         }
-        th {
-            background-color: #f8f8f8;
+        table th {
+            background-color: #f2f2f2;
+            text-align: left;
         }
         .totals {
             float: right;
-            width: 40%;
+            width: 35%;
         }
         .totals table {
             width: 100%;
         }
-        .totals td:first-child {
-            text-align: right;
-            font-weight: bold;
-            width: 60%;
+        .totals table td {
+            border: none;
+            padding: 5px;
         }
-        .clearfix::after {
-            content: "";
-            clear: both;
-            display: table;
+        .totals table tr:last-child td {
+            border-top: 1px solid #ddd;
+            font-weight: bold;
         }
         .notes {
-            margin-top: 30px;
-            font-size: 10px;
-            border-top: 1px solid #eee;
-            padding-top: 10px;
+            clear: both;
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
         }
-        /* Ajoutez ici plus de styles selon vos besoins */
+        .footer {
+            margin-top: 30px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+            font-size: 11px;
+            color: #777;
+        }
     </style>
 </head>
 <body>
@@ -123,23 +132,28 @@
                 @if(!empty($company['vat_number']))<p>N° TVA : {{ $company['vat_number'] }}</p>@endif
             </div>
             <div class="client-details">
-                <h3>Facturé à :</h3>
-                <p><strong>{{ $invoice->client->getDisplayNameAttribute() }}</strong></p>
-                <p>{{ $invoice->client->address_line1 }}</p>
-                @if($invoice->client->address_line2) <p>{{ $invoice->client->address_line2 }}</p> @endif
-                <p>{{ $invoice->client->postal_code }} {{ $invoice->client->city }}</p>
-                <p>{{ $invoice->client->country }}</p>
-                @if($invoice->client->phone_number) <p>Tél: {{ $invoice->client->phone_number }}</p> @endif
-                @if($invoice->client->email) <p>Email: {{ $invoice->client->email }}</p> @endif
+                <h3>Devis pour :</h3>
+                <p><strong>{{ $quotation->client->getDisplayNameAttribute() }}</strong></p>
+                <p>{{ $quotation->client->address_line1 }}</p>
+                @if($quotation->client->address_line2)
+                    <p>{{ $quotation->client->address_line2 }}</p>
+                @endif
+                <p>{{ $quotation->client->postal_code }} {{ $quotation->client->city }}</p>
+                @if($quotation->client->vat_number)
+                    <p>TVA: {{ $quotation->client->vat_number }}</p>
+                @endif
             </div>
         </div>
 
-        <div class="invoice-details">
-            <h2>Facture N° : {{ $invoice->invoice_number }}</h2>
-            <p><strong>Date de facturation :</strong> {{ $invoice->invoice_date->format('d/m/Y') }}</p>
-            <p><strong>Date d'échéance :</strong> {{ $invoice->due_date->format('d/m/Y') }}</p>
-            @if($invoice->order_reference)
-                <p><strong>Référence Commande Client :</strong> {{ $invoice->order_reference }}</p>
+        <div class="document-details">
+            <h2>Devis N° : {{ $quotation->quotation_number }}</h2>
+            <p><strong>Date du Devis :</strong> {{ $quotation->quotation_date->format('d/m/Y') }}</p>
+            <p><strong>Valide jusqu'au :</strong> {{ $quotation->expiry_date->format('d/m/Y') }}</p>
+            @if($quotation->user)
+                <p><strong>Conseiller :</strong> {{ $quotation->user->name }}</p>
+            @endif
+            @if($quotation->reference)
+                <p><strong>Référence :</strong> {{ $quotation->reference }}</p>
             @endif
         </div>
 
@@ -157,14 +171,14 @@
                 </tr>
             </thead>
             <tbody>
-                @foreach($invoice->items as $index => $item)
+                @foreach($quotation->items as $index => $item)
                 <tr>
                     <td>{{ $index + 1 }}</td>
                     <td>
                         {{ $item->product?->name ?? $item->description }}
                         @if($item->product?->sku) <br><small>SKU: {{ $item->product->sku }}</small> @endif
                     </td>
-                    <td style="text-align:right;">{{ number_format($item->quantity, 2, ',', ' ') }}</td>
+                    <td style="text-align:right;">{{ number_format($item->quantity, 2, ',', ' ') }}{{ $item->transactionUnit ? ' ' . $item->transactionUnit->symbol : '' }}</td>
                     <td style="text-align:right;">{{ number_format($item->unit_price, 2, ',', ' ') }} €</td>
                     <td style="text-align:right;">{{ number_format($item->discount_percentage, 2, ',', ' ') }}%</td>
                     @php
@@ -185,49 +199,45 @@
                 <table>
                     <tr>
                         <td>Sous-total HT :</td>
-                        <td style="text-align:right;">{{ number_format($invoice->subtotal, 2, ',', ' ') }} €</td>
+                        <td style="text-align:right;">{{ number_format($quotation->subtotal, 2, ',', ' ') }} €</td>
                     </tr>
+                    {{-- Remise globale si applicable aux devis --}}
+                    @if(isset($quotation->global_discount_amount) && $quotation->global_discount_amount > 0)
                     <tr>
                         <td>Remise Globale :</td>
-                        <td style="text-align:right;">- {{ number_format($invoice->global_discount_amount, 2, ',', ' ') }} €</td>
+                        <td style="text-align:right;">- {{ number_format($quotation->global_discount_amount, 2, ',', ' ') }} €</td>
                     </tr>
+                    @endif
                     <tr>
                         <td>Montant Taxes :</td>
-                        <td style="text-align:right;">{{ number_format($invoice->taxes_amount, 2, ',', ' ') }} €</td>
+                        <td style="text-align:right;">{{ number_format($quotation->taxes_amount, 2, ',', ' ') }} €</td>
                     </tr>
-                     @if($invoice->shipping_cost > 0)
+                    {{-- Frais de port si applicable aux devis --}}
+                    @if(isset($quotation->shipping_charges) && $quotation->shipping_charges > 0)
                     <tr>
                         <td>Frais de port :</td>
-                        <td style="text-align:right;">{{ number_format($invoice->shipping_cost, 2, ',', ' ') }} €</td>
+                        <td style="text-align:right;">{{ number_format($quotation->shipping_charges, 2, ',', ' ') }} €</td>
                     </tr>
                     @endif
                     <tr>
                         <td style="font-size: 1.2em;"><strong>Total TTC :</strong></td>
-                        <td style="text-align:right; font-size: 1.2em;"><strong>{{ number_format($invoice->total_amount, 2, ',', ' ') }} €</strong></td>
+                        <td style="text-align:right; font-size: 1.2em;"><strong>{{ number_format($quotation->total_amount, 2, ',', ' ') }} €</strong></td>
                     </tr>
-                    @if($invoice->amount_paid > 0)
-                    <tr>
-                        <td>Montant Payé :</td>
-                        <td style="text-align:right;">- {{ number_format($invoice->amount_paid, 2, ',', ' ') }} €</td>
-                    </tr>
-                    <tr>
-                        <td style="font-weight: bold;">Solde Dû :</td>
-                        <td style="text-align:right; font-weight: bold;">{{ number_format($invoice->total_amount - $invoice->amount_paid, 2, ',', ' ') }} €</td>
-                    </tr>
-                    @endif
                 </table>
             </div>
         </div>
 
-        @if($invoice->notes_to_client)
+        @if($quotation->terms_conditions)
         <div class="notes">
-            <strong>Notes :</strong><br>
-            {!! nl2br(e($invoice->notes_to_client)) !!}
+            <strong>Termes et Conditions :</strong><br>
+            {!! nl2br(e($quotation->terms_conditions)) !!}
         </div>
         @endif
 
         <div class="footer">
-            <p>Merci pour votre confiance.</p>
+            <p>Ce devis est valable jusqu'au {{ $quotation->expiry_date->format('d/m/Y') }}.</p>
+            <p>Pour accepter ce devis, veuillez nous le retourner signé avec la mention "Bon pour accord".</p>
+            
             @if(!empty($company['payment_terms']))
                 <p><strong>Conditions de paiement :</strong> {!! nl2br(e($company['payment_terms'])) !!}</p>
             @endif

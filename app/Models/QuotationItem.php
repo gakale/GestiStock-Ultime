@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -22,11 +24,12 @@ class QuotationItem extends Model
         'unit_price',
         'discount_percentage',
         'tax_rate',
+        'transaction_unit_id',
         'line_total',
     ];
 
     protected $casts = [
-        'quantity' => 'integer',
+        'quantity' => 'decimal:2',
         'unit_price' => 'decimal:2',
         'discount_percentage' => 'decimal:2',
         'tax_rate' => 'decimal:2',
@@ -61,5 +64,13 @@ class QuotationItem extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+    
+    /**
+     * Relation vers l'unité de mesure utilisée pour cette ligne de devis
+     */
+    public function transactionUnit(): BelongsTo
+    {
+        return $this->belongsTo(UnitOfMeasure::class, 'transaction_unit_id');
     }
 }
