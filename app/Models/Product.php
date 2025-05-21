@@ -7,7 +7,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes; // Si vous utilisez SoftDeletes
 use Illuminate\Support\Str;
-use Illuminate\Database\Eloquent\Relations\BelongsTo; // Ajouter
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Spatie\Activitylog\Traits\LogsActivity;
 use Spatie\Activitylog\LogOptions;
 use App\Models\Traits\FormatsActivityLogEvents;
@@ -29,7 +31,7 @@ class Product extends Model
         'base_purchase_price_unit_id', // Nouveau champ pour l'unité de prix d'achat
         'selling_price',
         'base_selling_price_unit_id', // Nouveau champ pour l'unité de prix de vente
-        'stock_quantity',
+        // 'stock_quantity', // Supprimé car calculé à partir des emplacements
         'stock_min_threshold',
         'stock_reorder_point',
         'stock_max_threshold',
@@ -51,7 +53,7 @@ class Product extends Model
     protected $casts = [
         'purchase_price' => 'decimal:2',
         'selling_price' => 'decimal:2',
-        'stock_quantity' => 'integer',
+        // 'stock_quantity' => 'integer', // Supprimé car calculé à partir des emplacements
         'stock_min_threshold' => 'decimal:2',
         'stock_reorder_point' => 'decimal:2',
         'stock_max_threshold' => 'decimal:2',
@@ -132,6 +134,47 @@ class Product extends Model
     public function baseSellingPriceUnit(): BelongsTo
     {
         return $this->belongsTo(UnitOfMeasure::class, 'base_selling_price_unit_id');
+    }
+    
+    /**
+     * Relation avec les stocks par emplacement
+     */
+    public function productLocationStocks(): HasMany
+    {
+        return $this->hasMany(ProductLocationStock::class);
+    }
+    
+    /**
+     * Accesseur pour la quantité totale en stock (somme de tous les emplacements)
+     */
+    protected function stockQuantity(): Attribute
+    {
+        return Attribute::make(
+            get: fn () => (float) $this->productLocationStocks()->sum('quantity')
+        );
+    }
+    
+    /**
+     * Méthode pour obtenir la quantité dans un emplacement spécifique
+     */
+    public function getStockAtLocation(string $locationId): float
+    {
+        $stockEntry = $this->productLocationStocks()->where('location_id', $locationId)->first();
+        return $stockEntry ? (float)$stockEntry->quantity : 0.0;
+    }
+    
+    /**
+     * Méthode pour mettre à jour le stock dans un emplacement spécifique
+     * Utilisée par les StockMovements.
+     */
+    public function updateStockAtLocation(string $locationId, float $quantityChange): ProductLocationStock
+    {
+        $stockEntry = $this->productLocationStocks()->firstOrCreate(
+            ['location_id' => $locationId], // Conditions de recherche
+            ['quantity' => 0]                // Valeurs par défaut si création
+        );
+        $stockEntry->increment('quantity', $quantityChange); // Ou decrement si négatif
+        return $stockEntry;
     }
     
     /**

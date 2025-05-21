@@ -33,8 +33,14 @@ use App\Observers\SupplierCreditNoteItemObserver;
 use Spatie\Activitylog\Models\Activity;
 use App\Observers\ActivityLogObserver;
 use App\Models\GoodsReceipt;
+use App\Models\Location;
+use App\Models\ProductLocationStock;
+use App\Models\Warehouse;
 use App\Observers\GoodsReceiptObserver;
+use App\Observers\LocationObserver;
+use App\Observers\ProductLocationStockObserver;
 use App\Observers\ProductObserver;
+use App\Observers\WarehouseObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -72,5 +78,10 @@ class AppServiceProvider extends ServiceProvider
         
         // Observateur pour les produits (gestion du stock initial)
         Product::observe(ProductObserver::class);
+        
+        // Observateurs pour la gestion des emplacements et multi-tenant
+        Warehouse::observe(WarehouseObserver::class);
+        Location::observe(LocationObserver::class);
+        ProductLocationStock::observe(ProductLocationStockObserver::class);
     }
 }

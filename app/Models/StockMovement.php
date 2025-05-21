@@ -9,13 +9,17 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo; // Pour la relation polymorphique
+use Stancl\Tenancy\Database\Concerns\BelongsToTenant;
 
 class StockMovement extends Model
 {
-    use HasFactory, HasUuids;
+    use HasFactory, HasUuids, BelongsToTenant;
 
     protected $fillable = [
+        'tenant_id',
         'product_id',
+        'source_location_id',
+        'destination_location_id',
         'type',
         'quantity_changed',
         'new_stock_quantity_after_movement',
@@ -25,6 +29,7 @@ class StockMovement extends Model
         'user_id',
         'reason',
         'notes',
+        'transaction_unit_id',
     ];
 
     protected $casts = [
@@ -78,5 +83,21 @@ class StockMovement extends Model
     public function relatedDocument(): MorphTo
     {
         return $this->morphTo(__FUNCTION__, 'related_document_type', 'related_document_id');
+    }
+    
+    /**
+     * Relation vers l'emplacement source (pour les sorties et transferts)
+     */
+    public function sourceLocation(): BelongsTo
+    {
+        return $this->belongsTo(Location::class, 'source_location_id');
+    }
+    
+    /**
+     * Relation vers l'emplacement destination (pour les entrées et transferts)
+     */
+    public function destinationLocation(): BelongsTo
+    {
+        return $this->belongsTo(Location::class, 'destination_location_id');
     }
 }

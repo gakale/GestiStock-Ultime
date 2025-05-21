@@ -6,6 +6,7 @@ namespace App\Filament\Company\Resources\GoodsReceiptResource\RelationManagers;
 
 use App\Models\Product;
 use App\Models\UnitOfMeasure;
+use App\Models\Location;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -109,6 +110,21 @@ class ItemsRelationManager extends RelationManager
                     ->minValue(0)
                     ->step(0.01),
                 
+                Select::make('destination_location_id')
+                    ->label('Emplacement de Rangement')
+                    ->options(function () {
+                        return Location::where('is_storable', true)
+                            ->orderBy('name')
+                            ->get()
+                            ->pluck('fullPath', 'id')
+                            ->toArray();
+                    })
+                    ->searchable()
+                    ->preload()
+                    ->required()
+                    ->columnSpan(2)
+                    ->helperText('Où cet article sera stocké.'),
+                
                 TextInput::make('unit_price')
                     ->label('Prix Unitaire Achat')
                     ->numeric()
@@ -140,6 +156,11 @@ class ItemsRelationManager extends RelationManager
                     ->alignRight(),
                 TextColumn::make('transactionUnit.symbol')
                     ->label('Unité Transac.'),
+                TextColumn::make('destinationLocation.name')
+                    ->label('Emplacement')
+                    ->searchable()
+                    ->sortable()
+                    ->description(fn ($record) => $record->destinationLocation?->warehouse?->name),
                 TextColumn::make('quantity_received')
                     ->label('Qté Reçue Stock')
                     ->numeric()

@@ -24,6 +24,7 @@ class GoodsReceiptItem extends Model
         'quantity_ordered',
         'transaction_unit_id',
         'transaction_quantity',
+        'destination_location_id', // NOUVEAU: Emplacement de rangement pour cet item reçu
         'quantity_received', // Quantité en unité de STOCK du produit
         'unit_price',
         'notes',
@@ -134,5 +135,13 @@ class GoodsReceiptItem extends Model
     public function purchaseOrderItem(): BelongsTo
     {
         return $this->belongsTo(PurchaseOrderItem::class);
+    }
+    
+    /**
+     * Relation vers l'emplacement de destination où l'article sera stocké
+     */
+    public function destinationLocation(): BelongsTo
+    {
+        return $this->belongsTo(Location::class, 'destination_location_id');
     }
 }
